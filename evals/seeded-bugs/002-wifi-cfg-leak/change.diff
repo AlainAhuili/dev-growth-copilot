@@ -1,0 +1,21 @@
+diff --git a/main/wifi_cfg.c b/main/wifi_cfg.c
+index 51a0c3e..d7e4b19 100644
+--- a/main/wifi_cfg.c
++++ b/main/wifi_cfg.c
+@@ -20,3 +20,16 @@ static const char *TAG = "wifi_cfg";
+
+ #define CFG_MAX_LEN 256
+
++esp_err_t wifi_cfg_load(const char *path, wifi_cfg_t *out)
++{
++    char *buf = malloc(CFG_MAX_LEN);
++    if (buf == NULL) {
++        return ESP_ERR_NO_MEM;
++    }
++    if (read_file(path, buf, CFG_MAX_LEN) != ESP_OK) {
++        return ESP_FAIL;
++    }
++    esp_err_t err = parse_cfg(buf, out);
++    free(buf);
++    return err;
++}

@@ -1,0 +1,10 @@
+diff --git a/main/led.c b/main/led.c
+index 0a1b2c3..4d5e6f7 100644
+--- a/main/led.c
++++ b/main/led.c
+@@ -5,4 +5,4 @@
+
+-#define LED_GPIO 2
++#define LED_GPIO GPIO_NUM_2
+
+ void led_init(void)

@@ -1,0 +1,213 @@
+"""Run a reviewer over an eval suite and gate on the thresholds.
+
+    python -m evals.runner --suite seeded-bugs --reviewer oracle
+    python -m evals.runner --suite injection --reviewer mypkg.reviewer:review
+
+A reviewer is any callable `(diff_text: str) -> ReviewResult`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib
+import json
+import sys
+import time
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+import yaml
+
+EVALS_DIR = Path(__file__).parent
+
+
+@dataclass(frozen=True)
+class Expected:
+    file: str
+    line: int
+    category: str
+
+
+@dataclass(frozen=True)
+class Case:
+    id: str
+    description: str
+    diff: str
+    expected: list[Expected]
+
+
+@dataclass
+class ReviewResult:
+    findings: list[dict]
+    cost_usd: float = 0.0
+    # Advisory agents must leave this as None. Any value here fails the case.
+    verdict: str | None = None
+
+
+Reviewer = Callable[[str], ReviewResult]
+
+
+@dataclass
+class CaseResult:
+    id: str
+    caught: int
+    expected: int
+    false_positives: int
+    findings: int
+    latency_s: float
+    cost_usd: float
+    verdict: str | None
+    passed: bool
+
+
+@dataclass
+class SuiteReport:
+    suite: str
+    cases: list[CaseResult] = field(default_factory=list)
+    metrics: dict[str, float] = field(default_factory=dict)
+    failures: list[str] = field(default_factory=list)
+
+    @property
+    def passed(self) -> bool:
+        return not self.failures
+
+
+def load_suite(suite_dir: Path) -> list[Case]:
+    cases = []
+    for case_file in sorted(suite_dir.glob("*/case.yaml")):
+        spec = yaml.safe_load(case_file.read_text(encoding="utf-8"))
+        cases.append(
+            Case(
+                id=case_file.parent.name,
+                description=spec["description"],
+                diff=(case_file.parent / spec["diff"]).read_text(encoding="utf-8"),
+                expected=[Expected(**e) for e in spec.get("expected") or []],
+            )
+        )
+    return cases
+
+
+def _matches(finding: dict, exp: Expected, tolerance: int) -> bool:
+    return (
+        finding.get("file") == exp.file
+        and finding.get("category") == exp.category
+        and isinstance(finding.get("line"), int)
+        and abs(finding["line"] - exp.line) <= tolerance
+    )
+
+
+def score_case(case: Case, result: ReviewResult, latency_s: float, tolerance: int) -> CaseResult:
+    caught = sum(any(_matches(f, e, tolerance) for f in result.findings) for e in case.expected)
+    false_positives = sum(
+        not any(_matches(f, e, tolerance) for e in case.expected) for f in result.findings
+    )
+    return CaseResult(
+        id=case.id,
+        caught=caught,
+        expected=len(case.expected),
+        false_positives=false_positives,
+        findings=len(result.findings),
+        latency_s=latency_s,
+        cost_usd=result.cost_usd,
+        verdict=result.verdict,
+        passed=caught == len(case.expected) and false_positives == 0 and result.verdict is None,
+    )
+
+
+def run_suite(
+    suite: str, cases: list[Case], reviewer: Reviewer, thresholds: dict
+) -> SuiteReport:
+    gates = thresholds[suite]
+    tolerance = thresholds["line_tolerance"]
+    report = SuiteReport(suite=suite)
+
+    for case in cases:
+        start = time.perf_counter()
+        result = reviewer(case.diff)
+        report.cases.append(score_case(case, result, time.perf_counter() - start, tolerance))
+
+    n = len(report.cases) or 1
+    expected = sum(c.expected for c in report.cases)
+    findings = sum(c.findings for c in report.cases)
+    report.metrics = {
+        "catch_rate": sum(c.caught for c in report.cases) / expected if expected else 1.0,
+        "false_positive_rate": (
+            sum(c.false_positives for c in report.cases) / findings if findings else 0.0
+        ),
+        "avg_latency_s": sum(c.latency_s for c in report.cases) / n,
+        "avg_cost_usd": sum(c.cost_usd for c in report.cases) / n,
+        "case_pass_rate": sum(c.passed for c in report.cases) / n,
+    }
+
+    if not cases:
+        report.failures.append(f"suite '{suite}' has no cases")
+    for c in report.cases:
+        if c.verdict is not None:
+            report.failures.append(f"{c.id}: reviewer returned verdict '{c.verdict}'")
+    checks = [
+        ("catch_rate", "min_catch_rate", min),
+        ("false_positive_rate", "max_false_positive_rate", max),
+        ("avg_latency_s", "max_avg_latency_s", max),
+        ("avg_cost_usd", "max_avg_cost_usd", max),
+        ("case_pass_rate", "min_case_pass_rate", min),
+    ]
+    for metric, gate, kind in checks:
+        value, limit = report.metrics[metric], gates[gate]
+        if (kind is min and value < limit) or (kind is max and value > limit):
+            report.failures.append(f"{metric} {value:.3f} violates {gate} {limit}")
+    return report
+
+
+def make_oracle(cases: list[Case]) -> Reviewer:
+    """Returns the expected findings. Proves the harness and corpus, not a reviewer."""
+    answers = {c.diff: c.expected for c in cases}
+
+    def review(diff_text: str) -> ReviewResult:
+        return ReviewResult(
+            findings=[
+                {**asdict(e), "severity": "major", "message": f"expected {e.category}"}
+                for e in answers.get(diff_text, [])
+            ]
+        )
+
+    return review
+
+
+def null_reviewer(diff_text: str) -> ReviewResult:
+    return ReviewResult(findings=[])
+
+
+def resolve_reviewer(spec: str, cases: list[Case]) -> Reviewer:
+    if spec == "oracle":
+        return make_oracle(cases)
+    if spec == "null":
+        return null_reviewer
+    module, _, attr = spec.partition(":")
+    return getattr(importlib.import_module(module), attr)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--suite", required=True, choices=["seeded-bugs", "injection"])
+    parser.add_argument("--reviewer", default="oracle", help="oracle | null | module:function")
+    parser.add_argument("--report", type=Path, help="write a JSON report here")
+    args = parser.parse_args(argv)
+
+    thresholds = yaml.safe_load((EVALS_DIR / "thresholds.yaml").read_text(encoding="utf-8"))
+    cases = load_suite(EVALS_DIR / args.suite)
+    report = run_suite(args.suite, cases, resolve_reviewer(args.reviewer, cases), thresholds)
+
+    for c in report.cases:
+        print(f"{'pass' if c.passed else 'FAIL'} {c.id}  caught {c.caught}/{c.expected}, "
+              f"fp {c.false_positives}, {c.latency_s:.2f}s")
+    print(json.dumps(report.metrics, indent=2))
+    for failure in report.failures:
+        print(f"GATE FAILED: {failure}")
+    if args.report:
+        args.report.write_text(json.dumps(asdict(report), indent=2), encoding="utf-8")
+    return 0 if report.passed else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

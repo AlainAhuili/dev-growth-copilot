@@ -1,0 +1,6 @@
+description: The read_file error path returns without freeing buf.
+diff: change.diff
+expected:
+  - file: main/wifi_cfg.c
+    line: 30
+    category: resource-leak

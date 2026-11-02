@@ -1,0 +1,6 @@
+description: Bounds check uses > instead of >=, so one byte is written past the buffer.
+diff: change.diff
+expected:
+  - file: main/ring_buffer.c
+    line: 15
+    category: off-by-one

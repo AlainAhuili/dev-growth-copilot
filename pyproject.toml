@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["tools", "skillmap", "evals"]
+
+[tool.setuptools.package-data]
+skillmap = ["migrations/*.sql"]
+
+[project]
+name = "dev-growth-copilot"
+version = "0.1.0"
+description = "Advisory AI reviewer, coach and dojo that run inside a Continuous Delivery pipeline."
+requires-python = ">=3.11"
+dependencies = [
+    "jsonschema>=4.21",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]

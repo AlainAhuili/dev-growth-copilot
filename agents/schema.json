@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent definition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "version", "role", "advisory", "model", "modes", "tools"],
+  "properties": {
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "role": { "enum": ["reviewer", "coach", "dojo"] },
+    "advisory": {
+      "const": true,
+      "description": "Agents advise; deterministic tools gate. An agent may never decide pass or fail."
+    },
+    "model": { "type": "string", "minLength": 1 },
+    "modes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "stage", "prompt"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+          "stage": { "enum": ["commit", "acceptance", "validation", "production", "metrics"] },
+          "prompt": { "type": "string", "pattern": "^prompts/.+\\.md$" },
+          "model": { "type": "string", "minLength": 1 },
+          "max_diff_lines": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "tools": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["git.diff", "git.changed_files", "tests.run", "scan.sast", "scan.deps", "skillmap.read", "skillmap.write"] }
+    }
+  }
+}

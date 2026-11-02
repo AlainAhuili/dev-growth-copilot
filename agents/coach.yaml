@@ -1,0 +1,15 @@
+name: coach
+version: 0.1.0
+role: coach
+advisory: true
+model: claude-sonnet-5-5
+modes:
+  - name: spec
+    stage: acceptance
+    prompt: prompts/coach-spec.md
+  - name: weekly-report
+    stage: metrics
+    prompt: prompts/coach-weekly.md
+tools:
+  - skillmap.read
+  - tests.run

@@ -1,0 +1,13 @@
+name: dojo
+version: 0.1.0
+role: dojo
+advisory: true
+model: claude-sonnet-5-5
+modes:
+  - name: incident-drill
+    stage: production
+    prompt: prompts/dojo-drill.md
+tools:
+  - git.diff
+  - skillmap.read
+  - skillmap.write

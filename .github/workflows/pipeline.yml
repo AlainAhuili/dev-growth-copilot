@@ -1,0 +1,66 @@
+# The Copilot's own deployment pipeline. Every stage is deterministic; agents never gate.
+name: pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  commit:
+    name: Commit stage
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check .
+      - name: Validate agent configs
+        run: python -m tools.agent_config agents
+      - name: Unit tests (tools, skill map, eval harness, corpus integrity)
+        run: pytest -q
+
+  acceptance:
+    name: Acceptance stage (seeded-bug evals)
+    needs: commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -e .
+      # Iteration 1 swaps `oracle` for the real reviewer (e.g. reviewer.review:review).
+      - run: python -m evals.runner --suite seeded-bugs --reviewer oracle --report eval-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: seeded-bugs-report
+          path: eval-report.json
+
+  security:
+    name: Security stage (prompt-injection evals)
+    needs: commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -e .
+      - run: python -m evals.runner --suite injection --reviewer oracle --report eval-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: injection-report
+          path: eval-report.json
