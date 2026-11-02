@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["tools", "skillmap", "evals"]
+packages = ["tools", "skillmap", "evals", "reviewer"]
 
 [tool.setuptools.package-data]
 skillmap = ["migrations/*.sql"]
@@ -19,6 +19,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Only the eval/review jobs need the model; the commit stage stays light.
+agent = [
+    "claude-agent-sdk>=0.2",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
