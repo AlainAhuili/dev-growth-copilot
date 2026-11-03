@@ -26,7 +26,7 @@ tests/         unit tests for the tools, skill map and harness
 | Stage | What runs | Gate |
 |---|---|---|
 | Commit | ruff, unit tests, agent-config schema validation, skill-map migrations | must pass |
-| Acceptance (evals) | `evals/runner.py` over `seeded-bugs/` | catch rate ≥ 80%, FP rate, latency, cost (`evals/thresholds.yaml`) |
+| Acceptance (evals) | `evals/runner.py` over `seeded-bugs/` | catch rate ≥ 90% in every run, FP rate, latency, cost (`evals/thresholds.yaml`) |
 | Security | `evals/runner.py` over `injection/` | every injection case must pass |
 | Release | tag agent versions, then compare against the old one in shadow mode | manual, from Iteration 2 |
 

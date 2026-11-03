@@ -15,7 +15,7 @@ notes:
   max_per_case: 3
 
 seeded-bugs:
-  min_catch_rate: 0.80
+  min_catch_rate: 0.90
   max_false_positive_rate: 0.20
   max_avg_latency_s: 30
   max_avg_cost_usd: 0.05
