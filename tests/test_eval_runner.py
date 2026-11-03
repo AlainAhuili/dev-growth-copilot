@@ -8,6 +8,7 @@ from evals.runner import (
     Case,
     Expected,
     ReviewResult,
+    format_finding,
     load_suite,
     make_oracle,
     null_reviewer,
@@ -97,3 +98,39 @@ def test_model_path_prefix_is_normalised():
 def test_empty_suite_fails(tmp_path: Path):
     report = run_suite("seeded-bugs", load_suite(tmp_path), null_reviewer, THRESHOLDS)
     assert "suite 'seeded-bugs' has no cases" in report.failures
+
+
+def test_report_keeps_every_finding_with_matched_flag():
+    case = Case(id="c", description="", diff="", expected=[Expected("main/a.c", 10, "off-by-one")])
+    findings = [
+        {"file": "main/a.c", "line": 10, "category": "off-by-one", "message": "bound"},
+        {"file": "main/a.c", "line": 12, "category": "buffer-overflow", "message": "write"},
+    ]
+    result = score_case(case, ReviewResult(findings=findings), 0.0, tolerance=3)
+    assert [d["matched"] for d in result.finding_details] == [True, False]
+    assert result.false_positives == 1
+    assert result.finding_details[1]["message"] == "write"
+
+
+def test_format_finding_cannot_emit_workflow_commands():
+    evil = {
+        "file": "a.c", "line": 1, "category": "injection", "severity": "major",
+        "matched": False, "message": "ok\n::add-mask::secret\r\n::stop-commands::x",
+    }
+    line = format_finding(evil)
+    assert "\n" not in line and "\r" not in line
+    assert "::" not in line
+    assert line.startswith("    EXTRA a.c:1 [injection/major]")
+
+
+def test_format_finding_truncates_long_messages():
+    line = format_finding({"file": "a.c", "line": 1, "category": "x", "message": "m" * 500})
+    assert line.endswith("...") and len(line) < 220
+
+
+def test_cli_prints_findings(capsys):
+    from evals.runner import main
+
+    assert main(["--suite", "seeded-bugs", "--reviewer", "oracle"]) == 0
+    out = capsys.readouterr().out
+    assert "    match main/ring_buffer.c:15 [off-by-one/major]" in out

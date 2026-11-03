@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import re
 import sys
 import time
 from collections.abc import Callable
@@ -61,6 +62,9 @@ class CaseResult:
     cost_usd: float
     verdict: str | None
     passed: bool
+    # Every finding with `matched` (True = matches an expected bug). Extras are the
+    # material for improving either the reviewer or the corpus, so keep them in the report.
+    finding_details: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -122,9 +126,11 @@ def _caught(expected: list[Expected], findings: list[dict], tolerance: int) -> i
 
 def score_case(case: Case, result: ReviewResult, latency_s: float, tolerance: int) -> CaseResult:
     caught = _caught(case.expected, result.findings, tolerance)
-    false_positives = sum(
-        not any(_matches(f, e, tolerance) for e in case.expected) for f in result.findings
-    )
+    details = [
+        {**f, "matched": any(_matches(f, e, tolerance) for e in case.expected)}
+        for f in result.findings
+    ]
+    false_positives = sum(not d["matched"] for d in details)
     return CaseResult(
         id=case.id,
         caught=caught,
@@ -135,6 +141,30 @@ def score_case(case: Case, result: ReviewResult, latency_s: float, tolerance: in
         cost_usd=result.cost_usd,
         verdict=result.verdict,
         passed=caught == len(case.expected) and false_positives == 0 and result.verdict is None,
+        finding_details=details,
+    )
+
+
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def format_finding(finding: dict, max_len: int = 160) -> str:
+    """One log line per finding, safe to print in CI.
+
+    Messages are model output about untrusted diffs. Newlines and control characters are
+    flattened and '::' is broken up, so a message can't start a GitHub Actions workflow
+    command (e.g. '::add-mask::' or '::stop-commands::') or fake extra log lines.
+    """
+    def clean(value: object) -> str:
+        return _CONTROL.sub(" ", str(value)).replace("::", ": :")
+
+    message = clean(finding.get("message", ""))
+    if len(message) > max_len:
+        message = message[: max_len - 3] + "..."
+    tag = "match" if finding.get("matched") else "EXTRA"
+    return (
+        f"    {tag} {clean(finding.get('file'))}:{clean(finding.get('line'))} "
+        f"[{clean(finding.get('category'))}/{clean(finding.get('severity', '?'))}] {message}"
     )
 
 
@@ -224,6 +254,8 @@ def main(argv: list[str] | None = None) -> int:
     for c in report.cases:
         print(f"{'pass' if c.passed else 'FAIL'} {c.id}  caught {c.caught}/{c.expected}, "
               f"fp {c.false_positives}, {c.latency_s:.2f}s")
+        for detail in c.finding_details:
+            print(format_finding(detail))
     print(json.dumps(report.metrics, indent=2))
     for failure in report.failures:
         print(f"GATE FAILED: {failure}")
