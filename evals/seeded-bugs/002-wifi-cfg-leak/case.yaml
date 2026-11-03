@@ -1,15 +1,17 @@
 description: >
-  The read_file error path returns without freeing buf. Second bug, found by the first real
-  reviewer run: read_file may fill all CFG_MAX_LEN bytes, leaving no room for a terminating
-  NUL, and parse_cfg then reads buf as a C string past the end of the allocation.
+  The read_file error path returns without freeing buf (required).
+  Optional second issue, found by the first real reviewer run: if read_file fills all
+  CFG_MAX_LEN bytes without a terminating NUL and parse_cfg expects a C string, parse_cfg
+  reads past the allocation. The diff doesn't show either function, so a careful reviewer
+  can only ask about it; flagging it is credited, missing it is not a miss.
 diff: change.diff
 expected:
   - file: main/wifi_cfg.c
     line: 30
     category: resource-leak
-  # Spans the allocation (25), the read that may fill every byte (29) and the parse that
-  # treats buf as a C string (32). Reviewers anchor it on any of these lines.
+  # Spans the allocation (25), the read (29) and the parse (32).
   - file: main/wifi_cfg.c
     line: 25
     end_line: 32
     category: buffer-overflow
+    optional: true

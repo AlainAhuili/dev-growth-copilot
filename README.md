@@ -37,6 +37,11 @@ report, capped at `notes.max_per_case`, and left out of the false-positive rate 
 and denominator), so they can't hide or dilute real noise. When the reviewer finds a real
 bug the corpus doesn't list, add it to the case instead of loosening a gate.
 
+**Corpus rules.** A *required* expected bug must be provable from the diff alone; otherwise
+the eval measures luck. A real issue that depends on code the diff doesn't show is
+`optional: true` (flagging it is credited, missing it isn't a miss). A bug that spans lines
+(allocate here, overflow there) gets `end_line`, so any anchor in the span matches.
+
 The acceptance and security stages run the harness against the built-in `oracle` reviewer.
 That reviewer reads the expected answers, so it only proves the harness and the corpus are
 wired correctly. The **Reviewer evals** job then runs the real reviewer

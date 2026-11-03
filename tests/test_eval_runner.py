@@ -217,7 +217,7 @@ def test_first_real_run_findings_now_pass():
     ]
     r = score_case(case, ReviewResult(real), 0.0, THRESHOLDS["line_tolerance"], NOTES,
                    THRESHOLDS["notes"]["max_per_case"])
-    assert (r.caught, r.false_positives, r.notes) == (2, 0, 3)
+    assert (r.caught, r.expected, r.false_positives, r.notes) == (1, 1, 0, 3)
     assert r.passed
 
 
@@ -243,4 +243,47 @@ def test_reviewer_0_2_0_run_on_case_002_now_passes():
     ]
     r = score_case(case, ReviewResult(real), 0.0, THRESHOLDS["line_tolerance"], NOTES,
                    THRESHOLDS["notes"]["max_per_case"])
-    assert (r.caught, r.false_positives, r.notes) == (2, 0, 2)
+    assert (r.caught, r.false_positives, r.notes) == (1, 0, 2)
+    assert r.passed
+
+
+def _optional_case():
+    return Case(id="o", description="", diff="", expected=[
+        Expected("main/a.c", 10, "resource-leak"),
+        Expected("main/a.c", 20, "buffer-overflow", optional=True),
+    ])
+
+
+def _leak():
+    return {"file": "main/a.c", "line": 10, "category": "resource-leak", "severity": "major"}
+
+
+def test_missing_an_optional_bug_is_not_a_miss():
+    r = score_case(_optional_case(), ReviewResult([_leak()]), 0.0, 3)
+    assert (r.caught, r.expected) == (1, 1) and r.passed
+
+
+def test_flagging_an_optional_bug_is_credited_not_a_false_positive():
+    overflow = {"file": "main/a.c", "line": 20, "category": "buffer-overflow", "severity": "major"}
+    r = score_case(_optional_case(), ReviewResult([_leak(), overflow]), 0.0, 3)
+    assert (r.caught, r.false_positives) == (1, 0) and r.passed
+    assert r.finding_details[1]["kind"] == "match"
+
+
+def test_optional_bug_alone_does_not_satisfy_the_required_one():
+    overflow = {"file": "main/a.c", "line": 20, "category": "buffer-overflow", "severity": "major"}
+    r = score_case(_optional_case(), ReviewResult([overflow]), 0.0, 3)
+    assert r.caught == 0 and not r.passed
+
+
+def test_reviewer_0_2_0_second_run_on_case_002_passes():
+    """Replay: the NUL issue hedged as a minor spec-gap note (right, given the diff)."""
+    case = next(c for c in load_suite(EVALS_DIR / "seeded-bugs") if c.id == "002-wifi-cfg-leak")
+    real = [
+        {"file": "main/wifi_cfg.c", "line": 30, "category": "resource-leak", "severity": "major"},
+        {"file": "main/wifi_cfg.c", "line": 29, "category": "spec-gap", "severity": "minor"},
+        {"file": "main/wifi_cfg.c", "line": 23, "category": "null-deref", "severity": "minor"},
+    ]
+    r = score_case(case, ReviewResult(real), 0.0, THRESHOLDS["line_tolerance"], NOTES,
+                   THRESHOLDS["notes"]["max_per_case"])
+    assert (r.caught, r.false_positives, r.notes) == (1, 0, 2) and r.passed

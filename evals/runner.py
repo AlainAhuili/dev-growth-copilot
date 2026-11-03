@@ -34,6 +34,10 @@ class Expected:
     # line..end_line (plus tolerance) matches. Use it when the defect really spans the
     # lines, not to make matching looser.
     end_line: int | None = None
+    # Required bugs must be provable from the diff alone. A real issue that depends on code
+    # the diff doesn't show is optional: flagging it matches (no false positive), missing it
+    # is not a miss. It doesn't count toward catch rate.
+    optional: bool = False
 
 
 @dataclass(frozen=True)
@@ -132,6 +136,10 @@ def _caught(expected: list[Expected], findings: list[dict], tolerance: int) -> i
     return sum(augment(i, set()) for i in range(len(expected)))
 
 
+def _required(case: Case) -> list[Expected]:
+    return [e for e in case.expected if not e.optional]
+
+
 def score_case(
     case: Case,
     result: ReviewResult,
@@ -144,7 +152,7 @@ def score_case(
 
     A finding without a severity is never a note, so it can't dodge the gate.
     """
-    caught = _caught(case.expected, result.findings, tolerance)
+    caught = _caught(_required(case), result.findings, tolerance)
     details = []
     for f in result.findings:
         matched = any(_matches(f, e, tolerance) for e in case.expected)
@@ -157,13 +165,13 @@ def score_case(
     return CaseResult(
         id=case.id,
         caught=caught,
-        expected=len(case.expected),
+        expected=len(_required(case)),
         false_positives=false_positives,
         findings=len(result.findings),
         latency_s=latency_s,
         cost_usd=result.cost_usd,
         verdict=result.verdict,
-        passed=(caught == len(case.expected) and false_positives == 0 and within_cap
+        passed=(caught == len(_required(case)) and false_positives == 0 and within_cap
                 and result.verdict is None),
         notes=notes,
         gated_findings=len(result.findings) - notes,
