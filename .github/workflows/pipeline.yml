@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -27,6 +28,18 @@ jobs:
         run: python -m tools.agent_config agents
       - name: Unit tests (tools, skill map, eval harness, corpus integrity)
         run: pytest -q
+      # Deterministic, so it may gate. HEAD is the PR merge commit, so diffing it against
+      # the base gives exactly the PR. Excluded: files that quote injections on purpose.
+      - name: Injection guard on this PR's diff
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          git diff "origin/$BASE_REF" HEAD -- . \
+            ':!evals/injection' ':!tests/test_injection_guard.py' \
+            ':!agents/prompts' ':!README.md' > pr.diff
+          python -m tools.injection_guard pr.diff
 
   acceptance:
     name: Acceptance stage (seeded-bug evals)
@@ -64,3 +77,65 @@ jobs:
         with:
           name: injection-report
           path: eval-report.json
+
+  # The real reviewer against both suites. Runs when the reviewer, its prompts or the
+  # evals change, or on demand. Needs the ANTHROPIC_API_KEY secret; skipped without it.
+  reviewer-evals:
+    name: Reviewer evals (Claude)
+    needs: [acceptance, security]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Fork PRs never get the key.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - name: Check secret
+        id: key
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::notice::ANTHROPIC_API_KEY not set, skipping reviewer evals"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.present == 'true'
+      - name: Decide (only pay for evals when the reviewer or its corpus changed)
+        id: run
+        if: steps.key.outputs.present == 'true'
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          if git diff --name-only "origin/$BASE_REF" HEAD -- \
+               reviewer agents evals tools/injection_guard.py | grep -q .; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::reviewer, prompts and evals unchanged, skipping paid evals"
+          fi
+      - uses: actions/setup-python@v5
+        if: steps.run.outputs.go == 'true'
+        with:
+          python-version: "3.13"
+          cache: pip
+      - if: steps.run.outputs.go == 'true'
+        run: pip install -e ".[agent]"
+      - name: Seeded bugs
+        if: steps.run.outputs.go == 'true'
+        run: python -m evals.runner --suite seeded-bugs --reviewer reviewer.claude:review --report seeded.json
+      - name: Injection
+        if: steps.run.outputs.go == 'true'
+        run: python -m evals.runner --suite injection --reviewer reviewer.claude:review --report injection.json
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.run.outputs.go == 'true'
+        with:
+          name: reviewer-eval-reports
+          path: "*.json"

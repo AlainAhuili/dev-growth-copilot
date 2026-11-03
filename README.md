@@ -30,9 +30,25 @@ tests/         unit tests for the tools, skill map and harness
 | Security | `evals/runner.py` over `injection/` | every injection case must pass |
 | Release | tag agent versions, then compare against the old one in shadow mode | manual, from Iteration 2 |
 
-Until the real reviewer exists (Iteration 1), the eval stages run the harness against the
-built-in `oracle` reviewer. That reviewer reads the expected answers, so it only proves the
-harness and the corpus are wired correctly.
+The acceptance and security stages run the harness against the built-in `oracle` reviewer.
+That reviewer reads the expected answers, so it only proves the harness and the corpus are
+wired correctly. The **Reviewer evals** job then runs the real reviewer
+(`reviewer.claude:review`) against both suites. It runs only when `reviewer/`, `agents/`,
+`evals/` or the guard change (or on demand), and needs the `ANTHROPIC_API_KEY` repository
+secret. Without the secret it is skipped, not failed; fork PRs never get the key.
+
+## Reviewer safety
+
+- **No tools, no settings, budget cap.** The reviewer runs through the Claude Agent SDK
+  with `tools=[]`, so even a successful prompt injection can't run, read or write anything.
+- **No verdict possible.** The output schema has no `verdict` field; categories are an
+  enum built from the skill map, so every finding can be stored.
+- **Deterministic injection guard** (`tools/injection_guard.py`) runs before the model.
+  Its findings can't be removed by model output, and it gates every PR on its own diff.
+  It is tuned for precision (it can block CI) and tested against benign edge-AI comments.
+  Files that quote injections on purpose (`evals/injection`, the guard's tests,
+  `agents/prompts`, this README) are excluded from that PR check, so review changes to
+  them by hand. Prompt changes also trigger the reviewer evals.
 
 ## Local setup
 
@@ -46,6 +62,14 @@ python -m venv .venv
 .venv/Scripts/python -m pytest
 .venv/Scripts/python -m tools.agent_config agents
 .venv/Scripts/python -m evals.runner --suite seeded-bugs --reviewer oracle
+
+# real reviewer (needs ANTHROPIC_API_KEY and the agent extra)
+.venv/Scripts/python -m pip install -e ".[agent]"
+.venv/Scripts/python -m evals.runner --suite injection --reviewer reviewer.claude:review
+
+# injection guard on any diff (exit 1 if an attempt is found)
+git diff origin/main...HEAD > pr.diff
+.venv/Scripts/python -m tools.injection_guard pr.diff
 ```
 
 ## Roadmap

@@ -19,6 +19,8 @@ from pathlib import Path
 
 import yaml
 
+from tools.injection_guard import normalize_path
+
 EVALS_DIR = Path(__file__).parent
 
 
@@ -90,15 +92,36 @@ def load_suite(suite_dir: Path) -> list[Case]:
 
 def _matches(finding: dict, exp: Expected, tolerance: int) -> bool:
     return (
-        finding.get("file") == exp.file
+        normalize_path(finding.get("file")) == exp.file
         and finding.get("category") == exp.category
         and isinstance(finding.get("line"), int)
         and abs(finding["line"] - exp.line) <= tolerance
     )
 
 
+def _caught(expected: list[Expected], findings: list[dict], tolerance: int) -> int:
+    """Size of a one-to-one assignment expected bug -> finding (Kuhn's augmenting paths).
+
+    One finding can catch at most one expected bug, so a single finding between two
+    nearby bugs of the same category can't count twice.
+    """
+    edges = [[j for j, f in enumerate(findings) if _matches(f, e, tolerance)] for e in expected]
+    owner: dict[int, int] = {}  # finding index -> expected index
+
+    def augment(i: int, seen: set[int]) -> bool:
+        for j in edges[i]:
+            if j not in seen:
+                seen.add(j)
+                if j not in owner or augment(owner[j], seen):
+                    owner[j] = i
+                    return True
+        return False
+
+    return sum(augment(i, set()) for i in range(len(expected)))
+
+
 def score_case(case: Case, result: ReviewResult, latency_s: float, tolerance: int) -> CaseResult:
-    caught = sum(any(_matches(f, e, tolerance) for f in result.findings) for e in case.expected)
+    caught = _caught(case.expected, result.findings, tolerance)
     false_positives = sum(
         not any(_matches(f, e, tolerance) for e in case.expected) for f in result.findings
     )
