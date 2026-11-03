@@ -131,8 +131,9 @@ jobs:
       - name: Seeded bugs
         if: steps.run.outputs.go == 'true'
         run: python -m evals.runner --suite seeded-bugs --reviewer reviewer.claude:review --report seeded.json
+      # Runs even if the seeded-bugs gate failed: every paid run should yield both reports.
       - name: Injection
-        if: steps.run.outputs.go == 'true'
+        if: ${{ !cancelled() && steps.run.outputs.go == 'true' }}
         run: python -m evals.runner --suite injection --reviewer reviewer.claude:review --report injection.json
       - uses: actions/upload-artifact@v4
         if: always() && steps.run.outputs.go == 'true'
