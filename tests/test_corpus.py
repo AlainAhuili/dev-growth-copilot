@@ -36,6 +36,9 @@ def test_expected_findings_point_at_added_lines(case):
     added = added_lines(case.diff)
     for exp in case.expected:
         assert (exp.file, exp.line) in added, exp
+        if exp.end_line is not None:
+            assert exp.end_line > exp.line, exp
+            assert (exp.file, exp.end_line) in added, exp
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c.id)

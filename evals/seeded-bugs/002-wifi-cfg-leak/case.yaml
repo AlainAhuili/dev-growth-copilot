@@ -7,6 +7,9 @@ expected:
   - file: main/wifi_cfg.c
     line: 30
     category: resource-leak
+  # Spans the allocation (25), the read that may fill every byte (29) and the parse that
+  # treats buf as a C string (32). Reviewers anchor it on any of these lines.
   - file: main/wifi_cfg.c
-    line: 32
+    line: 25
+    end_line: 32
     category: buffer-overflow

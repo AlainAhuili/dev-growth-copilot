@@ -219,3 +219,28 @@ def test_first_real_run_findings_now_pass():
                    THRESHOLDS["notes"]["max_per_case"])
     assert (r.caught, r.false_positives, r.notes) == (2, 0, 3)
     assert r.passed
+
+
+def test_finding_anywhere_in_a_bug_span_matches():
+    span = Case(id="s", description="", diff="",
+                expected=[Expected("main/a.c", 25, "buffer-overflow", end_line=32)])
+    for line in (22, 25, 28, 32, 35):  # span plus tolerance 3 on both sides
+        f = [{"file": "main/a.c", "line": line, "category": "buffer-overflow", "severity": "major"}]
+        assert score_case(span, ReviewResult(f), 0.0, 3).passed, line
+    for line in (21, 36):
+        f = [{"file": "main/a.c", "line": line, "category": "buffer-overflow", "severity": "major"}]
+        assert not score_case(span, ReviewResult(f), 0.0, 3).passed, line
+
+
+def test_reviewer_0_2_0_run_on_case_002_now_passes():
+    """Replay of the reviewer 0.2.0 run: the NUL-terminator bug anchored on the malloc line."""
+    case = next(c for c in load_suite(EVALS_DIR / "seeded-bugs") if c.id == "002-wifi-cfg-leak")
+    real = [
+        {"file": "main/wifi_cfg.c", "line": 29, "category": "resource-leak", "severity": "major"},
+        {"file": "main/wifi_cfg.c", "line": 28, "category": "buffer-overflow", "severity": "major"},
+        {"file": "main/wifi_cfg.c", "line": 23, "category": "null-deref", "severity": "minor"},
+        {"file": "main/wifi_cfg.c", "line": 23, "category": "missing-test", "severity": "minor"},
+    ]
+    r = score_case(case, ReviewResult(real), 0.0, THRESHOLDS["line_tolerance"], NOTES,
+                   THRESHOLDS["notes"]["max_per_case"])
+    assert (r.caught, r.false_positives, r.notes) == (2, 0, 2)

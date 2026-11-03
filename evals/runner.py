@@ -30,6 +30,10 @@ class Expected:
     file: str
     line: int
     category: str
+    # Some bugs span several lines (allocate here, overflow there). A finding anywhere in
+    # line..end_line (plus tolerance) matches. Use it when the defect really spans the
+    # lines, not to make matching looser.
+    end_line: int | None = None
 
 
 @dataclass(frozen=True)
@@ -103,7 +107,7 @@ def _matches(finding: dict, exp: Expected, tolerance: int) -> bool:
         normalize_path(finding.get("file")) == exp.file
         and finding.get("category") == exp.category
         and isinstance(finding.get("line"), int)
-        and abs(finding["line"] - exp.line) <= tolerance
+        and exp.line - tolerance <= finding["line"] <= (exp.end_line or exp.line) + tolerance
     )
 
 
