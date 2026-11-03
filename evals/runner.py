@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import re
 import sys
 import time
 from collections.abc import Callable
@@ -29,6 +30,14 @@ class Expected:
     file: str
     line: int
     category: str
+    # Some bugs span several lines (allocate here, overflow there). A finding anywhere in
+    # line..end_line (plus tolerance) matches. Use it when the defect really spans the
+    # lines, not to make matching looser.
+    end_line: int | None = None
+    # Required bugs must be provable from the diff alone. A real issue that depends on code
+    # the diff doesn't show is optional: flagging it matches (no false positive), missing it
+    # is not a miss. It doesn't count toward catch rate.
+    optional: bool = False
 
 
 @dataclass(frozen=True)
@@ -55,12 +64,19 @@ class CaseResult:
     id: str
     caught: int
     expected: int
-    false_positives: int
+    false_positives: int  # unmatched findings above note severity
     findings: int
     latency_s: float
     cost_usd: float
     verdict: str | None
     passed: bool
+    # Unmatched findings at a note severity (info/minor): reported, capped, not counted
+    # as false positives. They are coaching ("test the boundary"), not claimed bugs.
+    notes: int = 0
+    gated_findings: int = 0  # findings above note severity, the false-positive denominator
+    # Every finding with `matched` (True = matches an expected bug). Extras are the
+    # material for improving either the reviewer or the corpus, so keep them in the report.
+    finding_details: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -95,7 +111,7 @@ def _matches(finding: dict, exp: Expected, tolerance: int) -> bool:
         normalize_path(finding.get("file")) == exp.file
         and finding.get("category") == exp.category
         and isinstance(finding.get("line"), int)
-        and abs(finding["line"] - exp.line) <= tolerance
+        and exp.line - tolerance <= finding["line"] <= (exp.end_line or exp.line) + tolerance
     )
 
 
@@ -120,21 +136,70 @@ def _caught(expected: list[Expected], findings: list[dict], tolerance: int) -> i
     return sum(augment(i, set()) for i in range(len(expected)))
 
 
-def score_case(case: Case, result: ReviewResult, latency_s: float, tolerance: int) -> CaseResult:
-    caught = _caught(case.expected, result.findings, tolerance)
-    false_positives = sum(
-        not any(_matches(f, e, tolerance) for e in case.expected) for f in result.findings
-    )
+def _required(case: Case) -> list[Expected]:
+    return [e for e in case.expected if not e.optional]
+
+
+def score_case(
+    case: Case,
+    result: ReviewResult,
+    latency_s: float,
+    tolerance: int,
+    note_severities: frozenset[str] = frozenset(),
+    max_notes: int | None = None,
+) -> CaseResult:
+    """Score one case. With no note severities every unmatched finding is a false positive.
+
+    A finding without a severity is never a note, so it can't dodge the gate.
+    """
+    caught = _caught(_required(case), result.findings, tolerance)
+    details = []
+    for f in result.findings:
+        matched = any(_matches(f, e, tolerance) for e in case.expected)
+        is_note = not matched and f.get("severity") in note_severities
+        details.append({**f, "matched": matched, "kind": "match" if matched
+                        else "note" if is_note else "extra"})
+    false_positives = sum(d["kind"] == "extra" for d in details)
+    notes = sum(d["kind"] == "note" for d in details)
+    within_cap = max_notes is None or notes <= max_notes
     return CaseResult(
         id=case.id,
         caught=caught,
-        expected=len(case.expected),
+        expected=len(_required(case)),
         false_positives=false_positives,
         findings=len(result.findings),
         latency_s=latency_s,
         cost_usd=result.cost_usd,
         verdict=result.verdict,
-        passed=caught == len(case.expected) and false_positives == 0 and result.verdict is None,
+        passed=(caught == len(_required(case)) and false_positives == 0 and within_cap
+                and result.verdict is None),
+        notes=notes,
+        gated_findings=len(result.findings) - notes,
+        finding_details=details,
+    )
+
+
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def format_finding(finding: dict, max_len: int = 160) -> str:
+    """One log line per finding, safe to print in CI.
+
+    Messages are model output about untrusted diffs. Newlines and control characters are
+    flattened and '::' is broken up, so a message can't start a GitHub Actions workflow
+    command (e.g. '::add-mask::' or '::stop-commands::') or fake extra log lines.
+    """
+    def clean(value: object) -> str:
+        return _CONTROL.sub(" ", str(value)).replace("::", ": :")
+
+    message = clean(finding.get("message", ""))
+    if len(message) > max_len:
+        message = message[: max_len - 3] + "..."
+    tag = {"match": "match", "note": "note "}.get(
+        finding.get("kind", "match" if finding.get("matched") else "extra"), "EXTRA")
+    return (
+        f"    {tag} {clean(finding.get('file'))}:{clean(finding.get('line'))} "
+        f"[{clean(finding.get('category'))}/{clean(finding.get('severity', '?'))}] {message}"
     )
 
 
@@ -143,16 +208,22 @@ def run_suite(
 ) -> SuiteReport:
     gates = thresholds[suite]
     tolerance = thresholds["line_tolerance"]
+    note_cfg = thresholds.get("notes") or {}
+    note_severities = frozenset(note_cfg.get("severities", []))
+    max_notes = note_cfg.get("max_per_case")
     report = SuiteReport(suite=suite)
 
     for case in cases:
         start = time.perf_counter()
         result = reviewer(case.diff)
-        report.cases.append(score_case(case, result, time.perf_counter() - start, tolerance))
+        report.cases.append(score_case(case, result, time.perf_counter() - start, tolerance,
+                                       note_severities, max_notes))
 
     n = len(report.cases) or 1
     expected = sum(c.expected for c in report.cases)
-    findings = sum(c.findings for c in report.cases)
+    # Notes are excluded from the denominator too, so a reviewer can't dilute its
+    # false-positive rate by adding minor remarks.
+    findings = sum(c.gated_findings for c in report.cases)
     report.metrics = {
         "catch_rate": sum(c.caught for c in report.cases) / expected if expected else 1.0,
         "false_positive_rate": (
@@ -161,6 +232,7 @@ def run_suite(
         "avg_latency_s": sum(c.latency_s for c in report.cases) / n,
         "avg_cost_usd": sum(c.cost_usd for c in report.cases) / n,
         "case_pass_rate": sum(c.passed for c in report.cases) / n,
+        "notes": sum(c.notes for c in report.cases),
     }
 
     if not cases:
@@ -168,6 +240,8 @@ def run_suite(
     for c in report.cases:
         if c.verdict is not None:
             report.failures.append(f"{c.id}: reviewer returned verdict '{c.verdict}'")
+        if max_notes is not None and c.notes > max_notes:
+            report.failures.append(f"{c.id}: {c.notes} notes exceed max_per_case {max_notes}")
     checks = [
         ("catch_rate", "min_catch_rate", min),
         ("false_positive_rate", "max_false_positive_rate", max),
@@ -223,7 +297,9 @@ def main(argv: list[str] | None = None) -> int:
 
     for c in report.cases:
         print(f"{'pass' if c.passed else 'FAIL'} {c.id}  caught {c.caught}/{c.expected}, "
-              f"fp {c.false_positives}, {c.latency_s:.2f}s")
+              f"fp {c.false_positives}, notes {c.notes}, {c.latency_s:.2f}s")
+        for detail in c.finding_details:
+            print(format_finding(detail))
     print(json.dumps(report.metrics, indent=2))
     for failure in report.failures:
         print(f"GATE FAILED: {failure}")

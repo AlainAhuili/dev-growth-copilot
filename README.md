@@ -30,6 +30,18 @@ tests/         unit tests for the tools, skill map and harness
 | Security | `evals/runner.py` over `injection/` | every injection case must pass |
 | Release | tag agent versions, then compare against the old one in shadow mode | manual, from Iteration 2 |
 
+**Scoring.** A finding matches an expected bug by file, category and line (± `line_tolerance`),
+one-to-one. Unmatched `major`/`critical` findings are false positives. Unmatched
+`info`/`minor` findings are **learning notes**: shown in the log as `note`, kept in the
+report, capped at `notes.max_per_case`, and left out of the false-positive rate (numerator
+and denominator), so they can't hide or dilute real noise. When the reviewer finds a real
+bug the corpus doesn't list, add it to the case instead of loosening a gate.
+
+**Corpus rules.** A *required* expected bug must be provable from the diff alone; otherwise
+the eval measures luck. A real issue that depends on code the diff doesn't show is
+`optional: true` (flagging it is credited, missing it isn't a miss). A bug that spans lines
+(allocate here, overflow there) gets `end_line`, so any anchor in the span matches.
+
 The acceptance and security stages run the harness against the built-in `oracle` reviewer.
 That reviewer reads the expected answers, so it only proves the harness and the corpus are
 wired correctly. The **Reviewer evals** job then runs the real reviewer
