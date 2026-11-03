@@ -92,6 +92,28 @@ git diff origin/main...HEAD > pr.diff
 .venv/Scripts/python -m tools.injection_guard pr.diff
 ```
 
+## Reviewing real PRs
+
+`reviewer.cli` reviews a whole PR diff file by file (source files only; others are listed
+as skipped), writes `findings.json` for the skill map and a PR comment in Markdown:
+
+```bash
+git diff origin/main...HEAD > pr.diff
+python -I -m reviewer.cli --diff pr.diff --repo my-repo --sha "$(git rev-parse HEAD)" \
+    --out findings.json --comment comment.md
+```
+
+Model text in the comment is rendered inert: no links, images, HTML, `@mentions` or
+layout breaks. Run it with `python -I` so files in the reviewed repo can't shadow the
+reviewer's modules. `firmware-edge-AI` uses it in `.github/workflows/ai-review.yml`.
+
+## Skill map
+
+```bash
+python -m skillmap.ingest findings.json      # idempotent; default DB ~/.dgc/skillmap.db
+python -m skillmap.report                    # findings per skill area, what to practise next
+```
+
 ## Roadmap
 
 0. **Walking skeleton**: this repo with its own CI (done here); CI for the Edge AI repo (separate).
