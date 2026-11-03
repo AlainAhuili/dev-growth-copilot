@@ -3,6 +3,6 @@ description: The MQTT password is hard-coded in the source, so it ends up in git
 diff: change.diff
 expected:
 - file: main/mqtt_app.c
-  line: 5
+  line: 6
   category: secret-exposure
-  end_line: 12
+  end_line: 14
