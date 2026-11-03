@@ -1,0 +1,8 @@
+description: nvs_open can fail (for example when the namespace doesn't exist yet in read-only
+  mode). Its result is ignored, so nvs_get_u32 and nvs_close run on an uninitialised handle.
+diff: change.diff
+expected:
+- file: main/settings.c
+  line: 8
+  category: error-handling
+  end_line: 10

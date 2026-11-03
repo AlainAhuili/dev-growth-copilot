@@ -1,0 +1,23 @@
+diff --git a/main/pulse.c b/main/pulse.c
+index 1a2b3c4..5d6e7f8 100644
+--- a/main/pulse.c
++++ b/main/pulse.c
+@@ -1,4 +1,18 @@
+ #include "driver/gpio.h"
+
+ #define PULSE_GPIO 4
+
++static uint32_t pulse_count;
++
++static void IRAM_ATTR on_pulse(void *arg)
++{
++    pulse_count++;
++}
++
++/* Called from the reporting task once per second. */
++uint32_t pulse_take(void)
++{
++    uint32_t n = pulse_count;
++    pulse_count = 0;
++    return n;
++}

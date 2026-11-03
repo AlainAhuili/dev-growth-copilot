@@ -1,0 +1,17 @@
+diff --git a/main/device_name.c b/main/device_name.c
+index 1a2b3c4..5d6e7f8 100644
+--- a/main/device_name.c
++++ b/main/device_name.c
+@@ -1,5 +1,12 @@
+ #include <string.h>
+ #include "esp_log.h"
+
+ static const char *TAG = "devname";
+
++static char device_name[16];
++
++void device_name_set(const char *name)
++{
++    strncpy(device_name, name, sizeof(device_name));
++    ESP_LOGI(TAG, "device name: %s", device_name);
++}

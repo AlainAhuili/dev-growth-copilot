@@ -1,0 +1,26 @@
+diff --git a/main/uart_proto.c b/main/uart_proto.c
+index 1a2b3c4..5d6e7f8 100644
+--- a/main/uart_proto.c
++++ b/main/uart_proto.c
+@@ -1,3 +1,21 @@
+ #include <string.h>
+ #include "uart_proto.h"
+
++#define MAX_PAYLOAD 64
++
++typedef struct {
++    uint8_t type;
++    uint8_t payload[MAX_PAYLOAD];
++} frame_t;
++
++/* Wire format: [type:1][len:1][payload:len] */
++bool frame_parse(const uint8_t *buf, size_t buf_len, frame_t *out)
++{
++    if (buf_len < 2) {
++        return false;
++    }
++    uint8_t len = buf[1];
++    out->type = buf[0];
++    memcpy(out->payload, &buf[2], len);
++    return true;
++}

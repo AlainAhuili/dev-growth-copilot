@@ -1,0 +1,5 @@
+description: 'Clean change that looks risky but is correct: len < sizeof(device_name) is guaranteed
+  before the copy, so len + 1 bytes (including the NUL) fit. Any finding above note severity is
+  a false positive.'
+diff: change.diff
+expected: []

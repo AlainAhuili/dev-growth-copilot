@@ -1,0 +1,22 @@
+diff --git a/main/ota.c b/main/ota.c
+index 1a2b3c4..5d6e7f8 100644
+--- a/main/ota.c
++++ b/main/ota.c
+@@ -1,5 +1,17 @@
+ #include "esp_ota_ops.h"
+ #include "esp_log.h"
+
+ static const char *TAG = "ota";
+
++esp_err_t ota_finish(esp_ota_handle_t handle, const esp_partition_t *part)
++{
++    esp_ota_end(handle);
++    esp_err_t err = esp_ota_set_boot_partition(part);
++    if (err != ESP_OK) {
++        ESP_LOGE(TAG, "set boot partition failed: %s", esp_err_to_name(err));
++        return err;
++    }
++    ESP_LOGI(TAG, "update done, rebooting");
++    esp_restart();
++    return ESP_OK;
++}

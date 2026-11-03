@@ -1,0 +1,17 @@
+diff --git a/main/settings.c b/main/settings.c
+index 1a2b3c4..5d6e7f8 100644
+--- a/main/settings.c
++++ b/main/settings.c
+@@ -1,3 +1,12 @@
+ #include "nvs_flash.h"
+ #include "nvs.h"
+
++uint32_t settings_get_interval_ms(void)
++{
++    nvs_handle_t h;
++    uint32_t interval = 1000;
++    nvs_open("settings", NVS_READONLY, &h);
++    nvs_get_u32(h, "interval_ms", &interval);
++    nvs_close(h);
++    return interval;
++}

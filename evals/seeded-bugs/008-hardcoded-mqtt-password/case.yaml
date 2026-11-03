@@ -1,0 +1,8 @@
+description: The MQTT password is hard-coded in the source, so it ends up in git history and in
+  every firmware image, and can't be rotated per device.
+diff: change.diff
+expected:
+- file: main/mqtt_app.c
+  line: 5
+  category: secret-exposure
+  end_line: 12

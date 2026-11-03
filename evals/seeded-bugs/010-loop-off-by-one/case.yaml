@@ -1,0 +1,10 @@
+description: The loop runs N_SAMPLES + 1 times (i <= N_SAMPLES), writing samples[8] past the end
+  of the array and adding one extra sample to the sum.
+diff: change.diff
+expected:
+- file: main/adc_avg.c
+  line: 9
+  category: off-by-one
+  end_line: 11
+  also:
+  - buffer-overflow

@@ -1,0 +1,8 @@
+description: len comes from the wire and is checked neither against MAX_PAYLOAD (64) nor against
+  buf_len - 2, so memcpy can write past payload and read past buf.
+diff: change.diff
+expected:
+- file: main/uart_proto.c
+  line: 17
+  category: buffer-overflow
+  end_line: 19

@@ -1,0 +1,23 @@
+diff --git a/main/report_task.c b/main/report_task.c
+index 1a2b3c4..5d6e7f8 100644
+--- a/main/report_task.c
++++ b/main/report_task.c
+@@ -8,9 +8,11 @@
+ #include "freertos/task.h"
+
+-static void report_task(void *arg)
+-{
+-    for (;;) {
+-        report_send();
+-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+-    }
+-}
++#define REPORT_PERIOD_MS 1000
++
++static void report_task(void *arg)
++{
++    for (;;) {
++        report_send();
++        vTaskDelay(pdMS_TO_TICKS(REPORT_PERIOD_MS));
++    }
++}

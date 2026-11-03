@@ -1,0 +1,9 @@
+description: pulse_count is shared between an ISR and a task with no volatile, atomic or critical
+  section. Pulses arriving between the read and the reset in pulse_take are lost, and the compiler
+  may cache the value.
+diff: change.diff
+expected:
+- file: main/pulse.c
+  line: 5
+  category: race-condition
+  end_line: 16

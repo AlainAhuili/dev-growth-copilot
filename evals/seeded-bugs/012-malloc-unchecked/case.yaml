@@ -1,0 +1,8 @@
+description: malloc can return NULL (heap is small on an MCU), and snprintf then writes through
+  a NULL pointer.
+diff: change.diff
+expected:
+- file: main/telemetry_json.c
+  line: 7
+  category: null-deref
+  end_line: 8

@@ -37,10 +37,18 @@ report, capped at `notes.max_per_case`, and left out of the false-positive rate 
 and denominator), so they can't hide or dilute real noise. When the reviewer finds a real
 bug the corpus doesn't list, add it to the case instead of loosening a gate.
 
+**Repeated runs.** The real reviewer isn't deterministic, so each suite runs `repeats`
+times (3) and every run must pass: the gate is the worst run. The log ends with a per-case
+`k/3` summary and the list of flaky cases (passed in some runs, not all).
+
 **Corpus rules.** A *required* expected bug must be provable from the diff alone; otherwise
 the eval measures luck. A real issue that depends on code the diff doesn't show is
 `optional: true` (flagging it is credited, missing it isn't a miss). A bug that spans lines
-(allocate here, overflow there) gets `end_line`, so any anchor in the span matches.
+(allocate here, overflow there) gets `end_line`, so any anchor in the span matches. A bug
+with two legitimate names (a lock never released is a `resource-leak` and an
+`error-handling` bug) lists the second under `also`. Each case contains only its intended
+bugs: incidental issues are fixed in the diff, not left for the reviewer to stumble on.
+Clean cases (no expected bugs) keep a flag-everything reviewer from looking good.
 
 The acceptance and security stages run the harness against the built-in `oracle` reviewer.
 That reviewer reads the expected answers, so it only proves the harness and the corpus are
