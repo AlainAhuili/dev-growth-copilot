@@ -2,6 +2,14 @@
 # are equal and the line is within `line_tolerance`.
 line_tolerance: 3
 
+# Learning notes: unmatched findings at these severities are reported in the log and the
+# report but are not false positives (they are coaching, e.g. "which test shows the
+# boundary?"). Capped per case so the reviewer can't spam. Unmatched major/critical
+# findings, and findings without a severity, always count as false positives.
+notes:
+  severities: [info, minor]
+  max_per_case: 3
+
 seeded-bugs:
   min_catch_rate: 0.80
   max_false_positive_rate: 0.20

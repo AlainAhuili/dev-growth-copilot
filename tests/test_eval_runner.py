@@ -59,7 +59,8 @@ def test_noise_on_clean_case_counts_as_false_positive():
         return ReviewResult(findings=findings)
 
     report = run_suite("seeded-bugs", cases, noisy, THRESHOLDS)
-    assert report.metrics["false_positive_rate"] == pytest.approx(1 / 3)
+    findings = sum(len(c.expected) for c in cases) + 1  # oracle answers + the one noisy finding
+    assert report.metrics["false_positive_rate"] == pytest.approx(1 / findings)
     assert not report.passed
 
 
@@ -134,3 +135,87 @@ def test_cli_prints_findings(capsys):
     assert main(["--suite", "seeded-bugs", "--reviewer", "oracle"]) == 0
     out = capsys.readouterr().out
     assert "    match main/ring_buffer.c:15 [off-by-one/major]" in out
+
+
+NOTES = frozenset({"info", "minor"})
+
+
+def _one_bug_case():
+    return Case(id="c", description="", diff="", expected=[Expected("main/a.c", 10, "off-by-one")])
+
+
+def _bug_found():
+    return {"file": "main/a.c", "line": 10, "category": "off-by-one", "severity": "major"}
+
+
+def test_minor_unmatched_finding_is_a_note_not_a_false_positive():
+    note = {"file": "main/a.c", "line": 5, "category": "missing-test", "severity": "minor"}
+    r = score_case(_one_bug_case(), ReviewResult([_bug_found(), note]), 0.0, 3, NOTES, 3)
+    assert (r.false_positives, r.notes, r.gated_findings) == (0, 1, 1)
+    assert r.passed
+    assert r.finding_details[1]["kind"] == "note"
+
+
+def test_major_unmatched_finding_is_still_a_false_positive():
+    wrong = {"file": "main/a.c", "line": 5, "category": "null-deref", "severity": "major"}
+    r = score_case(_one_bug_case(), ReviewResult([_bug_found(), wrong]), 0.0, 3, NOTES, 3)
+    assert r.false_positives == 1 and not r.passed
+
+
+def test_finding_without_severity_cannot_dodge_the_gate():
+    no_sev = {"file": "main/a.c", "line": 5, "category": "null-deref"}
+    r = score_case(_one_bug_case(), ReviewResult([_bug_found(), no_sev]), 0.0, 3, NOTES, 3)
+    assert r.false_positives == 1
+
+
+def test_too_many_notes_fail_the_case_and_the_gate():
+    notes = [{"file": "main/a.c", "line": i, "category": "missing-test", "severity": "minor"}
+             for i in range(20, 24)]
+    r = score_case(_one_bug_case(), ReviewResult([_bug_found(), *notes]), 0.0, 3, NOTES, 3)
+    assert r.notes == 4 and not r.passed
+
+    cases = load_suite(EVALS_DIR / "seeded-bugs")
+    oracle = make_oracle(cases)
+
+    def chatty(diff_text):
+        extra = [{"file": "x.c", "line": i, "category": "missing-test", "severity": "info"}
+                 for i in range(4)]
+        return ReviewResult(findings=oracle(diff_text).findings + extra)
+
+    report = run_suite("seeded-bugs", cases, chatty, THRESHOLDS)
+    assert any("notes exceed max_per_case" in f for f in report.failures)
+
+
+def test_notes_do_not_dilute_false_positive_rate():
+    cases = load_suite(EVALS_DIR / "seeded-bugs")
+    oracle = make_oracle(cases)
+    bugged = next(c for c in cases if c.expected)
+
+    def wrong_plus_notes(diff_text):
+        findings = oracle(diff_text).findings
+        if diff_text == bugged.diff:
+            findings.append({"file": "x.c", "line": 1, "category": "coupling", "severity": "major"})
+            findings += [{"file": "x.c", "line": i, "category": "missing-test",
+                          "severity": "minor"} for i in range(2, 5)]
+        return ReviewResult(findings=findings)
+
+    report = run_suite("seeded-bugs", cases, wrong_plus_notes, THRESHOLDS)
+    gated = sum(len(c.expected) for c in cases) + 1
+    assert report.metrics["false_positive_rate"] == pytest.approx(1 / gated)
+    assert report.metrics["notes"] == 3
+
+
+def test_first_real_run_findings_now_pass():
+    """Replay of the 2026-11-03 Claude run on case 002 (5 findings), after the corpus fix."""
+    case = next(c for c in load_suite(EVALS_DIR / "seeded-bugs") if c.id == "002-wifi-cfg-leak")
+    real = [
+        {"file": "main/wifi_cfg.c", "line": 30, "category": "resource-leak", "severity": "major"},
+        {"file": "main/wifi_cfg.c", "line": 32, "category": "buffer-overflow", "severity": "major"},
+        {"file": "main/wifi_cfg.c", "line": 24, "category": "null-deref", "severity": "minor"},
+        {"file": "main/wifi_cfg.c", "line": 23, "category": "missing-test", "severity": "minor"},
+        {"file": "main/wifi_cfg.c", "line": 30, "category": "error-handling", "severity": "minor"},
+    ]
+    r = score_case(case, ReviewResult(real), 0.0, THRESHOLDS["line_tolerance"], NOTES,
+                   THRESHOLDS["notes"]["max_per_case"])
+    assert (r.caught, r.false_positives, r.notes) == (2, 0, 3)
+    assert r.passed
