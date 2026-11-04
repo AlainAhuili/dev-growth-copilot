@@ -27,7 +27,7 @@ def _finding(category="off-by-one", **kw):
 
 def test_migrate_is_idempotent():
     c = connect()
-    assert migrate(c) == [1]
+    assert migrate(c) == [1, 2, 3]
     assert migrate(c) == []
 
 

@@ -124,8 +124,10 @@ jobs:
           git fetch --no-tags --depth=1 origin "$BASE_REF"
           # No pipe into `grep -q`: under pipefail its early exit can SIGPIPE git diff and
           # make the condition false, silently skipping the evals.
+          # Only what the reviewer depends on: Coach or Dojo prompts don't change its output.
           changed=$(git diff --name-only "origin/$BASE_REF" HEAD -- \
-                      reviewer agents evals tools/injection_guard.py)
+                      reviewer evals tools/injection_guard.py \
+                      agents/reviewer.yaml 'agents/prompts/reviewer-*')
           if [ -n "$changed" ]; then
             echo "go=true" >> "$GITHUB_OUTPUT"
           else

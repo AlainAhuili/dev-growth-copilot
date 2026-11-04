@@ -22,7 +22,7 @@
         "required": ["name", "stage", "prompt"],
         "properties": {
           "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
-          "stage": { "enum": ["commit", "acceptance", "validation", "production", "metrics"] },
+          "stage": { "enum": ["commit", "acceptance", "validation", "production", "metrics", "practice"] },
           "prompt": { "type": "string", "pattern": "^prompts/.+\\.md$" },
           "model": { "type": "string", "minLength": 1 },
           "max_diff_lines": { "type": "integer", "minimum": 1 }
