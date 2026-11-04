@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["tools", "skillmap", "evals", "reviewer"]
+packages = ["tools", "skillmap", "evals", "reviewer", "coach"]
 
 [tool.setuptools.package-data]
 skillmap = ["migrations/*.sql"]

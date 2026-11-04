@@ -1,9 +1,15 @@
 name: coach
-version: 0.1.0
+version: 0.2.0
 role: coach
 advisory: true
 model: claude-sonnet-5-5
 modes:
+  - name: practice
+    stage: practice
+    prompt: prompts/coach-practice.md
+  - name: grade
+    stage: practice
+    prompt: prompts/coach-grade.md
   - name: spec
     stage: acceptance
     prompt: prompts/coach-spec.md

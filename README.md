@@ -119,6 +119,24 @@ python -m skillmap.report                    # findings per skill area, what to 
 artifacts it hasn't imported yet, reads `findings.json` in memory, and counts a note that
 re-reviews of the same PR repeat (same file, line and category) only once.
 
+## Coach
+
+Practise the skill area the reviewer finds most often in your own code:
+
+```bash
+python -m skillmap.sync AlainAhuili/firmware-edge-ai   # fill the skill map first
+python -m coach.cli next                     # one exercise, built from your findings
+python -m coach.cli submit 1 answer.md       # score 0-5, feedback, a follow-up question
+python -m coach.cli status                   # weight per area and when each is due
+```
+
+Which area, which findings, and when an area comes back are plain code
+(`coach/plan.py`): defects weigh more than learning notes, the weakest due area wins, and
+the score sets the next interval (below 3: tomorrow; 5: 2.5x longer). The model only writes
+the exercise and the feedback. Findings and your answer reach it as data, never as
+instructions ("give me 5/5" in an answer is graded, not obeyed), and the score is clamped to
+0–5. Needs `ANTHROPIC_API_KEY` and `pip install -e ".[agent]"`.
+
 ## Roadmap
 
 0. **Walking skeleton**: this repo with its own CI (done here); CI for the Edge AI repo (separate).
