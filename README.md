@@ -110,9 +110,14 @@ reviewer's modules. `firmware-edge-AI` uses it in `.github/workflows/ai-review.y
 ## Skill map
 
 ```bash
-python -m skillmap.ingest findings.json      # idempotent; default DB ~/.dgc/skillmap.db
+python -m skillmap.sync AlainAhuili/firmware-edge-ai  # pull every review-findings artifact
+python -m skillmap.ingest findings.json      # or import one file; default DB ~/.dgc/skillmap.db
 python -m skillmap.report                    # findings per skill area, what to practise next
 ```
+
+`skillmap.sync` needs a GitHub token (`GITHUB_TOKEN`, or `gh auth login`). It downloads only
+artifacts it hasn't imported yet, reads `findings.json` in memory, and counts a note that
+re-reviews of the same PR repeat (same file, line and category) only once.
 
 ## Roadmap
 

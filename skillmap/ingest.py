@@ -17,20 +17,33 @@ from skillmap.db import Finding, connect, migrate, record_finding
 DEFAULT_DB = Path.home() / ".dgc" / "skillmap.db"
 
 
-def ingest(conn, report: dict) -> tuple[int, int, int]:
-    """Returns (recorded, already_present, rejected)."""
+def ingest(conn, report: dict, across_commits: bool = False) -> tuple[int, int, int]:
+    """Returns (recorded, already_present, rejected).
+
+    By default a finding is a duplicate only within the same commit. With
+    `across_commits`, the same file, line and category in the same repo is one finding
+    whatever the commit: re-reviews of a PR repeat notes on unchanged code, and counting
+    each repeat would inflate that skill area.
+    """
     known = {r[0] for r in conn.execute("SELECT name FROM categories")}
     recorded = present = rejected = 0
     for f in report.get("findings", []):
         if f.get("category") not in known or not f.get("message"):
             rejected += 1
             continue
-        key = (report.get("commit_sha"), f.get("file"), f.get("line"), f["category"])
-        exists = conn.execute(
-            """SELECT 1 FROM findings WHERE commit_sha IS ? AND file IS ? AND line IS ?
-               AND category = ? LIMIT 1""",
-            key,
-        ).fetchone()
+        if across_commits:
+            exists = conn.execute(
+                """SELECT 1 FROM findings WHERE repo = ? AND file IS ? AND line IS ?
+                   AND category = ? LIMIT 1""",
+                (str(report.get("repo", "unknown")), f.get("file"), f.get("line"),
+                 f["category"]),
+            ).fetchone()
+        else:
+            exists = conn.execute(
+                """SELECT 1 FROM findings WHERE commit_sha IS ? AND file IS ? AND line IS ?
+                   AND category = ? LIMIT 1""",
+                (report.get("commit_sha"), f.get("file"), f.get("line"), f["category"]),
+            ).fetchone()
         if exists:
             present += 1
             continue
