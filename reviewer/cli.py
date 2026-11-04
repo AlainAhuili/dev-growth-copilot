@@ -30,7 +30,7 @@ MAX_COMMENT_NOTES = 8
 # Other changed files given to each file review as read-only context.
 CONTEXT_MAX_LINES = 600
 
-# review(diff, context=None) -> ReviewResult
+# review(diff, context=None, reported=None) -> ReviewResult
 Review = Callable[..., ReviewResult]
 
 
@@ -56,11 +56,28 @@ def is_reviewable(path: str) -> bool:
     return p.suffix.lower() in REVIEWABLE_SUFFIXES or p.name in REVIEWABLE_NAMES
 
 
+def _related(path_a: str, diff_a: str, path_b: str, diff_b: str) -> bool:
+    """True if either file mentions the other by name: an #include, an import, a workflow
+    that names platformio.ini. Cheap, language-agnostic, and errs towards including."""
+    return _mentions(diff_a, PurePosixPath(path_b).name) or _mentions(
+        diff_b, PurePosixPath(path_a).name)
+
+
+def _mentions(text: str, name: str) -> bool:
+    """`name` as a whole file name: 'main.cpp' is not mentioned by 'test_main.cpp'."""
+    return re.search(rf"(?<![A-Za-z0-9_.-]){re.escape(name)}(?![A-Za-z0-9_-])", text) is not None
+
+
 def build_context(files: list[tuple[str, str]], target: str, max_lines: int) -> str | None:
-    """Other reviewable files of the PR, whole files only, until the line budget is used."""
+    """The PR files related to `target` (see _related), whole files only, within budget.
+
+    Unrelated files are left out: they made v0.4.0 reviews three times as expensive
+    without changing what the reviewer could answer.
+    """
+    target_diff = dict(files)[target]
     parts, used, omitted = [], 0, []
     for path, file_diff in files:
-        if path == target:
+        if path == target or not _related(target, target_diff, path, file_diff):
             continue
         n = file_diff.count("\n")
         if used + n > max_lines:
@@ -71,6 +88,16 @@ def build_context(files: list[tuple[str, str]], target: str, max_lines: int) -> 
     if omitted:
         parts.append("(Not included, over the context budget: " + ", ".join(omitted) + ")\n")
     return "".join(parts) or None
+
+
+def summarize_reported(findings: list[dict], limit: int = 40) -> str | None:
+    """One line per finding so far, for the next file's review to avoid repeats."""
+    lines = [
+        f"- {f.get('file')}:{f.get('line')} [{f.get('category')}] "
+        + " ".join(str(f.get("message", "")).split())[:120]
+        for f in findings[:limit]
+    ]
+    return "\n".join(lines) or None
 
 
 def review_pr(diff_text: str, review: Review, max_lines: int, version: str,
@@ -94,9 +121,12 @@ def review_pr(diff_text: str, review: Review, max_lines: int, version: str,
         else:
             to_review.append((path, file_diff))
     for path, file_diff in to_review:
-        context = build_context(to_review, path, context_lines)
+        extra = {
+            "context": build_context(to_review, path, context_lines),
+            "reported": summarize_reported(findings),
+        }
         try:
-            result = review(file_diff, context=context) if context else review(file_diff)
+            result = review(file_diff, **{k: v for k, v in extra.items() if v})
         except Exception as exc:  # noqa: BLE001 - report and continue with the next file
             errors.append({"file": path, "error": f"{type(exc).__name__}: {exc}"[:300]})
             continue

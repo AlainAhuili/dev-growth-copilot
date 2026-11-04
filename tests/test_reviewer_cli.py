@@ -32,7 +32,7 @@ def test_split_by_file_keeps_order_and_paths():
 def test_review_pr_reviews_source_files_only_and_reports_the_rest():
     seen = []
 
-    def fake(diff_text, context=None):
+    def fake(diff_text, **kw):
         seen.append(diff_text)
         return ReviewResult(findings=[{"file": "x", "line": 1, "category": "off-by-one",
                                        "severity": "major", "message": "m"}], cost_usd=0.01)
@@ -49,13 +49,13 @@ def test_review_pr_reviews_source_files_only_and_reports_the_rest():
 
 def test_oversized_file_is_skipped_not_truncated():
     report = cli.review_pr(CASES["006-frame-length-unchecked"].diff,
-                           lambda d, context=None: ReviewResult(findings=[]),
+                           lambda d, **kw: ReviewResult(findings=[]),
                            max_lines=5, version="v")
     assert report["skipped"][0]["reason"].endswith("> 5")
 
 
 def test_one_failing_file_does_not_lose_the_others():
-    def flaky(diff_text, context=None):
+    def flaky(diff_text, **kw):
         if "pulse.c" in diff_text:
             raise RuntimeError("reviewer failed: overloaded")
         return ReviewResult(findings=[{"file": "main/adc_avg.c", "line": 9,
@@ -132,36 +132,12 @@ def test_main_end_to_end_with_fake_model(tmp_path, monkeypatch):
     assert cli.main([*args, "--fail-on-injection"]) == 1
 
 
-def test_each_file_gets_the_other_reviewable_files_as_context():
-    seen = {}
-
-    def fake(diff_text, context=None):
-        seen[cli.split_by_file(diff_text)[0][0]] = context
-        return ReviewResult(findings=[])
-
-    diff = _pr_diff("004-isr-shared-counter", "010-loop-off-by-one", extra=NOTEBOOK)
-    cli.review_pr(diff, fake, 400, "v")
-    assert set(seen) == {"main/pulse.c", "main/adc_avg.c"}
-    assert seen["main/pulse.c"] == CASES["010-loop-off-by-one"].diff
-    assert seen["main/adc_avg.c"] == CASES["004-isr-shared-counter"].diff
-    assert all("train.ipynb" not in c for c in seen.values())  # non-source never in context
-
-
 def test_single_file_pr_has_no_context():
     calls = []
     cli.review_pr(CASES["010-loop-off-by-one"].diff,
-                  lambda d, context=None: calls.append(context) or ReviewResult(findings=[]),
+                  lambda d, **kw: calls.append(kw.get('context')) or ReviewResult(findings=[]),
                   400, "v")
     assert calls == [None]
-
-
-def test_context_budget_keeps_whole_files_and_names_the_rest():
-    files = [(p, d) for p, d in cli.split_by_file(_pr_diff(
-        "004-isr-shared-counter", "006-frame-length-unchecked", "010-loop-off-by-one"))]
-    budget = files[2][1].count("\n")  # room for exactly the adc file
-    ctx = cli.build_context(files, "main/pulse.c", budget)
-    assert "main/adc_avg.c" in ctx and "+bool frame_parse" not in ctx
-    assert "Not included, over the context budget: main/uart_proto.c" in ctx
 
 
 def _note(file, sev="minor"):
@@ -183,3 +159,74 @@ def test_comment_caps_notes_and_points_to_the_artifact():
     assert md.count("**minor**") == cli.MAX_COMMENT_NOTES
     assert "and 7 more in the `review-findings` artifact" in md
     assert "15 learning note(s)" in md
+
+
+def _file_diff(path: str, *added: str) -> str:
+    body = "".join(f"+{a}\n" for a in added)
+    return (f"diff --git a/{path} b/{path}\n--- /dev/null\n+++ b/{path}\n"
+            f"@@ -0,0 +1,{len(added)} @@\n{body}")
+
+
+HEADER = _file_diff("lib/window/ring.h", "#pragma once", "template <int N> struct Ring {};")
+USER = _file_diff("src/main.cpp", '#include "ring.h"', "Ring<8> w;")
+TEST = _file_diff("test/test_ring.cpp", '#include "ring.h"', "void test_ring() {}")
+UNRELATED = _file_diff("src/led.c", "void led_on(void) {}")
+CI = _file_diff(".github/workflows/fw.yml", "on: push", "# builds per platformio.ini")
+INI = _file_diff("platformio.ini", "[env:native]", "platform = native")
+
+
+def test_related_by_include_in_either_direction():
+    assert cli._related("src/main.cpp", USER, "lib/window/ring.h", HEADER)
+    assert cli._related("lib/window/ring.h", HEADER, "src/main.cpp", USER)
+    assert not cli._related("src/main.cpp", USER, "src/led.c", UNRELATED)
+    assert cli._related(".github/workflows/fw.yml", CI, "platformio.ini", INI)
+
+
+def test_context_contains_only_related_files():
+    files = cli.split_by_file(HEADER + USER + TEST + UNRELATED)
+    ctx_header = cli.build_context(files, "lib/window/ring.h", 600)
+    assert "src/main.cpp" in ctx_header and "test/test_ring.cpp" in ctx_header
+    assert "led.c" not in ctx_header
+    assert cli.build_context(files, "src/led.c", 600) is None  # nothing related: no context
+    ctx_main = cli.build_context(files, "src/main.cpp", 600)
+    assert "ring.h" in ctx_main and "test_ring.cpp" not in ctx_main
+
+
+def test_context_budget_keeps_whole_files_and_names_the_rest():
+    files = cli.split_by_file(HEADER + USER + TEST)
+    budget = USER.count("\n")  # room for exactly one related file
+    ctx = cli.build_context(files, "lib/window/ring.h", budget)
+    assert ctx.startswith(USER)
+    assert "Not included, over the context budget: test/test_ring.cpp" in ctx
+
+
+def test_later_files_see_what_was_already_reported():
+    calls = []
+
+    def fake(diff_text, **kw):
+        calls.append(kw.get("reported"))
+        path = cli.split_by_file(diff_text)[0][0]
+        return ReviewResult(findings=[{"file": path, "line": 1, "category": "missing-test",
+                                       "severity": "minor", "message": f"note on {path}"}])
+
+    cli.review_pr(HEADER + USER, fake, 400, "v")
+    assert calls[0] is None
+    assert "lib/window/ring.h:1 [missing-test] note on lib/window/ring.h" in calls[1]
+
+
+def test_summarize_reported_is_one_short_line_per_finding():
+    long_msg = "word " * 100 + "\n::injected"
+    out = cli.summarize_reported([{"file": "a.c", "line": 3, "category": "x", "message": long_msg}])
+    assert out.count("\n") == 0 and len(out) < 160
+    assert cli.summarize_reported([]) is None
+
+
+def test_file_names_match_as_whole_names_only():
+    test_file = _file_diff("test/test_main.cpp", '#include "ring.h"')
+    main_file = _file_diff("src/main.cpp", "int main() {}")
+    assert not cli._related("src/main.cpp", main_file, "test/test_main.cpp", test_file)
+    assert cli._mentions('#include "main.cpp"', "main.cpp")
+    assert cli._mentions("see src/main.cpp:12", "main.cpp")
+    assert not cli._mentions("test_main.cpp", "main.cpp")
+    # A trailing full stop still counts ("see ring.h."), so this errs towards including.
+    assert cli._mentions("see ring.h.", "ring.h")

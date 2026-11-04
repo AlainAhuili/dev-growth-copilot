@@ -122,7 +122,9 @@ def main(argv: list[str]) -> int:
     text = Path(argv[0]).read_text(encoding="utf-8") if argv else sys.stdin.read()
     findings = scan(text)
     for f in findings:
-        print(f"::error file={f['file']},line={f['line']}::possible prompt injection")
+        # File names come from the diff: keep them from altering the workflow command.
+        safe = re.sub(r"[^A-Za-z0-9._/-]", "_", str(f["file"]))
+        print(f"::error file={safe},line={f['line']}::possible prompt injection")
     print(f"{len(findings)} injection finding(s)")
     return 1 if findings else 0
 

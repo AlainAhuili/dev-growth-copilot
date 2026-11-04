@@ -192,3 +192,17 @@ def test_target_file():
     adc = next(c for c in load_suite(EVALS_DIR / "seeded-bugs") if c.id.startswith("010"))
     assert claude.target_file(adc.diff) == "main/adc_avg.c"
     assert claude.target_file("--- a/x.c\n+++ /dev/null\n") is None
+
+
+def test_reported_summary_reaches_the_model_and_is_optional(monkeypatch):
+    seen = []
+
+    async def fake_ask(diff_text, mode, categories, **kw):
+        seen.append(kw)
+        return [], 0.0
+
+    monkeypatch.setattr(claude, "_ask", fake_ask)
+    adc = next(c for c in load_suite(EVALS_DIR / "seeded-bugs") if c.id.startswith("010"))
+    claude.review(adc.diff)
+    claude.review(adc.diff, reported="- main/x.c:1 [off-by-one] earlier note")
+    assert seen == [{}, {"reported": "- main/x.c:1 [off-by-one] earlier note"}]

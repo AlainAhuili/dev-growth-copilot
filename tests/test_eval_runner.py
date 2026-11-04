@@ -379,3 +379,24 @@ def test_gate_tolerance_follows_thresholds_not_corpus_size():
     floor = THRESHOLDS["seeded-bugs"]["min_catch_rate"]
     assert shipped.passed == ((required - 1) / required >= floor)
     assert not run_suite("seeded-bugs", cases, misses_one, strict("seeded-bugs")).passed
+
+
+def test_min_severity_turns_an_underrated_catch_into_a_miss():
+    case = Case(id="sev", description="", diff="", expected=[
+        Expected(".github/workflows/docs.yml", 14, "secret-exposure", end_line=26,
+                 min_severity="major")])
+    at = {"file": ".github/workflows/docs.yml", "line": 14, "category": "secret-exposure"}
+    underrated = score_case(case, ReviewResult([{**at, "severity": "minor"}]), 0.0, 3, NOTES, 3)
+    assert (underrated.caught, underrated.false_positives, underrated.notes) == (0, 0, 1)
+    assert not underrated.passed
+    for sev in ("major", "critical"):
+        assert score_case(case, ReviewResult([{**at, "severity": sev}]), 0.0, 3, NOTES, 3).passed
+
+
+def test_every_min_severity_in_the_corpus_is_a_real_severity():
+    from evals.runner import SEVERITY_RANK
+
+    for suite in SUITES:
+        for case in load_suite(EVALS_DIR / suite):
+            for e in case.expected:
+                assert e.min_severity in (None, *SEVERITY_RANK), case.id

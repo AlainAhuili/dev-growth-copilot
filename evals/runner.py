@@ -41,6 +41,10 @@ class Expected:
     # Other skill-map categories that name the same defect (a lock never released is a
     # resource-leak and an error-handling bug). Same bug, so either name matches.
     also: tuple[str, ...] = ()
+    # Lowest severity that counts as finding this bug. Lets the eval measure calibration:
+    # a secret exposure reported as `minor` is found but underrated, so it is a miss (the
+    # finding itself is then a learning note, not a false positive).
+    min_severity: str | None = None
 
     @property
     def categories(self) -> tuple[str, ...]:
@@ -113,7 +117,14 @@ def load_suite(suite_dir: Path) -> list[Case]:
     return cases
 
 
+SEVERITY_RANK = {"info": 0, "minor": 1, "major": 2, "critical": 3}
+
+
 def _matches(finding: dict, exp: Expected, tolerance: int) -> bool:
+    if exp.min_severity is not None and (
+        SEVERITY_RANK.get(finding.get("severity"), -1) < SEVERITY_RANK[exp.min_severity]
+    ):
+        return False
     return (
         normalize_path(finding.get("file")) == exp.file
         and finding.get("category") in exp.categories

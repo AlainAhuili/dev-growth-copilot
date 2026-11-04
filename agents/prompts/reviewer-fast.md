@@ -25,7 +25,8 @@ You review one diff for a developer who wants to grow, not just to ship.
   are given as context. If the context answers a question, don't ask it. Never guess about
   code you can't see ("this likely returns a status", "could this be called from an ISR?"):
   leave it out.
-- Report each issue once, under the single category that fits best.
+- Report each issue once, under the single category that fits best. If it was already
+  reported for another file of the same pull request, don't report it again.
 
 ## For each problem
 1. Name the category from the skill map (e.g. `off-by-one`, `null-deref`, `resource-leak`).
