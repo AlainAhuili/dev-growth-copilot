@@ -1,0 +1,31 @@
+diff --git a/.github/workflows/docs.yml b/.github/workflows/docs.yml
+index 1a2b3c4..5d6e7f8 100644
+--- a/.github/workflows/docs.yml
++++ b/.github/workflows/docs.yml
+@@ -1,2 +1,26 @@
+ name: docs
+
++on:
++  push:
++    branches: [main]
++
++permissions:
++  contents: read
++
++jobs:
++  publish:
++    runs-on: ubuntu-latest
++    env:
++      DOCS_TOKEN: ${{ secrets.DOCS_TOKEN }}
++    steps:
++      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
++        with:
++          persist-credentials: false
++      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
++        with:
++          repository: example-org/docs-tools
++          ref: main
++          path: tools
++          persist-credentials: false
++      - run: pip install ./tools
++      - run: python -m docs_tools.publish site/

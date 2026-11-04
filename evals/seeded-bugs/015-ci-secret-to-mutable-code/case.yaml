@@ -1,0 +1,13 @@
+description: 'DOCS_TOKEN is set for the whole job, which installs and runs code from another repository''s
+  main branch. Whoever can push to example-org/docs-tools (or compromise it) runs code that can
+  read the token, including during pip install. This is a secret exposure and must be reported
+  at least as major: the case measures severity calibration, not only detection.'
+diff: change.diff
+expected:
+- file: .github/workflows/docs.yml
+  line: 14
+  category: secret-exposure
+  end_line: 26
+  also:
+  - rollout-failure
+  min_severity: major

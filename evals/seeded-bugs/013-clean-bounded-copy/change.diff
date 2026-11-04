@@ -1,0 +1,23 @@
+diff --git a/main/device_name.c b/main/device_name.c
+index 1a2b3c4..5d6e7f8 100644
+--- a/main/device_name.c
++++ b/main/device_name.c
+@@ -1,5 +1,18 @@
+ #include <stdbool.h>
+ #include <string.h>
+
+ static char device_name[16];
+
++/* Returns false and keeps the old name if name is NULL or too long. */
++bool device_name_set(const char *name)
++{
++    if (name == NULL) {
++        return false;
++    }
++    size_t len = strnlen(name, sizeof(device_name));
++    if (len == sizeof(device_name)) {
++        return false;
++    }
++    memcpy(device_name, name, len + 1);
++    return true;
++}

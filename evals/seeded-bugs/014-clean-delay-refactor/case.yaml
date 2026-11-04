@@ -1,0 +1,4 @@
+description: 'Clean refactor: the magic delay is replaced by a named constant and pdMS_TO_TICKS.
+  Any finding above note severity is a false positive.'
+diff: change.diff
+expected: []

@@ -1,0 +1,19 @@
+diff --git a/main/adc_avg.c b/main/adc_avg.c
+index 1a2b3c4..5d6e7f8 100644
+--- a/main/adc_avg.c
++++ b/main/adc_avg.c
+@@ -1,4 +1,14 @@
+ #include "esp_adc/adc_oneshot.h"
+
+ #define N_SAMPLES 8
+
++int adc_average(adc_oneshot_unit_handle_t adc, adc_channel_t ch)
++{
++    int samples[N_SAMPLES];
++    int sum = 0;
++    for (int i = 0; i <= N_SAMPLES; i++) {
++        ESP_ERROR_CHECK(adc_oneshot_read(adc, ch, &samples[i]));
++        sum += samples[i];
++    }
++    return sum / N_SAMPLES;
++}

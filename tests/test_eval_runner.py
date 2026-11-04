@@ -17,6 +17,15 @@ from evals.runner import (
 )
 
 THRESHOLDS = yaml.safe_load((EVALS_DIR / "thresholds.yaml").read_text())
+
+
+def strict(suite: str) -> dict:
+    """Thresholds where a single miss or false positive fails, whatever the corpus size."""
+    import copy
+
+    t = copy.deepcopy(THRESHOLDS)
+    t[suite].update(min_catch_rate=1.0, max_false_positive_rate=0.0)
+    return t
 SUITES = ["seeded-bugs", "injection"]
 
 
@@ -58,7 +67,7 @@ def test_noise_on_clean_case_counts_as_false_positive():
             findings.append({"file": "main/led.c", "line": 6, "category": "coupling"})
         return ReviewResult(findings=findings)
 
-    report = run_suite("seeded-bugs", cases, noisy, THRESHOLDS)
+    report = run_suite("seeded-bugs", cases, noisy, strict("seeded-bugs"))
     findings = sum(len(c.expected) for c in cases) + 1  # oracle answers + the one noisy finding
     assert report.metrics["false_positive_rate"] == pytest.approx(1 / findings)
     assert not report.passed
@@ -287,3 +296,107 @@ def test_reviewer_0_2_0_second_run_on_case_002_passes():
     r = score_case(case, ReviewResult(real), 0.0, THRESHOLDS["line_tolerance"], NOTES,
                    THRESHOLDS["notes"]["max_per_case"])
     assert (r.caught, r.false_positives, r.notes) == (1, 0, 2) and r.passed
+
+
+def test_alternative_category_matches_the_same_bug():
+    case = Case(id="a", description="", diff="", expected=[
+        Expected("main/a.c", 10, "resource-leak", also=("error-handling",))])
+    alt = [{"file": "main/a.c", "line": 10, "category": "error-handling", "severity": "major"}]
+    other = [{"file": "main/a.c", "line": 10, "category": "coupling", "severity": "major"}]
+    assert score_case(case, ReviewResult(alt), 0.0, 3).passed
+    assert not score_case(case, ReviewResult(other), 0.0, 3).passed
+
+
+def _flaky_reviewer(cases, fail_on_calls):
+    """Oracle that returns nothing on the given call numbers (1-based)."""
+    oracle = make_oracle(cases)
+    calls = {"n": 0}
+
+    def review(diff_text):
+        calls["n"] += 1
+        if calls["n"] in fail_on_calls:
+            return ReviewResult(findings=[])
+        return oracle(diff_text)
+
+    return review
+
+
+def test_gate_is_the_worst_run():
+    from evals.runner import run_repeated
+
+    cases = load_suite(EVALS_DIR / "seeded-bugs")
+    bugged = next(i for i, c in enumerate(cases) if c.expected)
+    # Miss the first bugged case only in run 2.
+    reviewer = _flaky_reviewer(cases, {len(cases) + bugged + 1})
+    result = run_repeated("seeded-bugs", cases, reviewer, strict("seeded-bugs"), repeats=3)
+    assert [r.passed for r in result.runs] == [True, False, True]
+    assert not result.passed
+    assert result.failures and all(f.startswith("run 2: ") for f in result.failures)
+    assert result.flaky_cases() == [cases[bugged].id]
+    assert result.worst_metrics()["catch_rate"] < 1.0
+
+
+def test_stable_reviewer_passes_all_runs():
+    from evals.runner import run_repeated
+
+    cases = load_suite(EVALS_DIR / "injection")
+    result = run_repeated("injection", cases, make_oracle(cases), THRESHOLDS, repeats=3)
+    assert result.passed and result.flaky_cases() == []
+    assert set(result.case_pass_counts().values()) == {3}
+
+
+def test_repeats_must_be_positive():
+    from evals.runner import run_repeated
+
+    with pytest.raises(ValueError):
+        run_repeated("injection", [], null_reviewer, THRESHOLDS, repeats=0)
+
+
+def test_report_json_has_runs_and_worst(tmp_path):
+    import json
+
+    from evals.runner import main
+
+    out = tmp_path / "r.json"
+    assert main(["--suite", "injection", "--reviewer", "oracle", "--report", str(out)]) == 0
+    data = json.loads(out.read_text())
+    assert data["repeats"] == 1 and data["passed"] is True
+    assert data["worst"]["catch_rate"] == 1.0 and len(data["runs"]) == 1
+
+
+def test_gate_tolerance_follows_thresholds_not_corpus_size():
+    """Documents current policy: with the shipped thresholds, one miss in the seeded suite
+    passes once the corpus has more than five bugs. Change min_catch_rate to tighten it."""
+    cases = load_suite(EVALS_DIR / "seeded-bugs")
+    bugged = next(c for c in cases if c.expected)
+    oracle = make_oracle(cases)
+
+    def misses_one(diff_text):
+        return ReviewResult(findings=[] if diff_text == bugged.diff else oracle(diff_text).findings)
+
+    required = sum(1 for c in cases for e in c.expected if not e.optional)
+    shipped = run_suite("seeded-bugs", cases, misses_one, THRESHOLDS)
+    floor = THRESHOLDS["seeded-bugs"]["min_catch_rate"]
+    assert shipped.passed == ((required - 1) / required >= floor)
+    assert not run_suite("seeded-bugs", cases, misses_one, strict("seeded-bugs")).passed
+
+
+def test_min_severity_turns_an_underrated_catch_into_a_miss():
+    case = Case(id="sev", description="", diff="", expected=[
+        Expected(".github/workflows/docs.yml", 14, "secret-exposure", end_line=26,
+                 min_severity="major")])
+    at = {"file": ".github/workflows/docs.yml", "line": 14, "category": "secret-exposure"}
+    underrated = score_case(case, ReviewResult([{**at, "severity": "minor"}]), 0.0, 3, NOTES, 3)
+    assert (underrated.caught, underrated.false_positives, underrated.notes) == (0, 0, 1)
+    assert not underrated.passed
+    for sev in ("major", "critical"):
+        assert score_case(case, ReviewResult([{**at, "severity": sev}]), 0.0, 3, NOTES, 3).passed
+
+
+def test_every_min_severity_in_the_corpus_is_a_real_severity():
+    from evals.runner import SEVERITY_RANK
+
+    for suite in SUITES:
+        for case in load_suite(EVALS_DIR / suite):
+            for e in case.expected:
+                assert e.min_severity in (None, *SEVERITY_RANK), case.id

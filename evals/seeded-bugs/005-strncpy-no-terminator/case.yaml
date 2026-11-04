@@ -1,0 +1,8 @@
+description: strncpy does not write a terminating NUL when name has 16 or more characters, so
+  the %s in ESP_LOGI reads past device_name.
+diff: change.diff
+expected:
+- file: main/device_name.c
+  line: 13
+  category: buffer-overflow
+  end_line: 14

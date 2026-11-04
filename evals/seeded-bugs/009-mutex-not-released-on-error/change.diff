@@ -1,0 +1,24 @@
+diff --git a/main/sensor_bus.c b/main/sensor_bus.c
+index 1a2b3c4..5d6e7f8 100644
+--- a/main/sensor_bus.c
++++ b/main/sensor_bus.c
+@@ -1,6 +1,19 @@
+ #include "freertos/FreeRTOS.h"
+ #include "freertos/semphr.h"
+ #include "driver/i2c.h"
+
+ static SemaphoreHandle_t bus_lock;
+
++esp_err_t sensor_read(uint8_t addr, uint8_t *data, size_t len)
++{
++    if (xSemaphoreTake(bus_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
++        return ESP_ERR_TIMEOUT;
++    }
++    esp_err_t err = i2c_master_read_from_device(I2C_NUM_0, addr, data, len,
++                                                pdMS_TO_TICKS(50));
++    if (err != ESP_OK) {
++        return err;
++    }
++    xSemaphoreGive(bus_lock);
++    return ESP_OK;
++}

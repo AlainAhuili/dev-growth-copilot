@@ -1,0 +1,11 @@
+description: esp_ota_end validates the written image and returns an error (for example ESP_ERR_OTA_VALIDATE_FAILED)
+  if it is corrupt. The result is ignored, so the device switches its boot partition to an image
+  that failed validation.
+diff: change.diff
+expected:
+- file: main/ota.c
+  line: 8
+  category: rollout-failure
+  end_line: 9
+  also:
+  - error-handling

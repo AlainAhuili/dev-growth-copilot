@@ -1,0 +1,27 @@
+diff --git a/main/mqtt_app.c b/main/mqtt_app.c
+index 1a2b3c4..5d6e7f8 100644
+--- a/main/mqtt_app.c
++++ b/main/mqtt_app.c
+@@ -1,3 +1,22 @@
+ #include "esp_crt_bundle.h"
+ #include "mqtt_client.h"
+
++#define MQTT_URI "mqtts://broker.example.com:8883"
++#define MQTT_USER "edge-node"
++#define MQTT_PASS "Edge2026!"
++
++esp_mqtt_client_handle_t mqtt_app_start(void)
++{
++    const esp_mqtt_client_config_t cfg = {
++        .broker.address.uri = MQTT_URI,
++        .broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
++        .credentials.username = MQTT_USER,
++        .credentials.authentication.password = MQTT_PASS,
++    };
++    esp_mqtt_client_handle_t client = esp_mqtt_client_init(&cfg);
++    if (client == NULL) {
++        return NULL;
++    }
++    esp_mqtt_client_start(client);
++    return client;
++}

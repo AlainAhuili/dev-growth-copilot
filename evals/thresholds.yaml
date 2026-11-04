@@ -2,6 +2,10 @@
 # are equal and the line is within `line_tolerance`.
 line_tolerance: 3
 
+# The real reviewer is not deterministic. Every suite runs this many times and every run
+# must pass, so the gate is the worst run, not a lucky one.
+repeats: 3
+
 # Learning notes: unmatched findings at these severities are reported in the log and the
 # report but are not false positives (they are coaching, e.g. "which test shows the
 # boundary?"). Capped per case so the reviewer can't spam. Unmatched major/critical
@@ -11,7 +15,7 @@ notes:
   max_per_case: 3
 
 seeded-bugs:
-  min_catch_rate: 0.80
+  min_catch_rate: 0.90
   max_false_positive_rate: 0.20
   max_avg_latency_s: 30
   max_avg_cost_usd: 0.05

@@ -1,0 +1,15 @@
+diff --git a/main/telemetry_json.c b/main/telemetry_json.c
+index 1a2b3c4..5d6e7f8 100644
+--- a/main/telemetry_json.c
++++ b/main/telemetry_json.c
+@@ -1,3 +1,10 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+
++/* Caller frees the returned string. */
++char *telemetry_json(float temp_c, float humidity)
++{
++    char *out = malloc(64);
++    snprintf(out, 64, "{\"t\":%.1f,\"h\":%.1f}", temp_c, humidity);
++    return out;
++}

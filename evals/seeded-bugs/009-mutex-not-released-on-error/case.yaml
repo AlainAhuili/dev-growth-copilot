@@ -1,0 +1,11 @@
+description: When the I2C read fails, sensor_read returns without xSemaphoreGive, so bus_lock
+  stays taken and every later sensor_read times out.
+diff: change.diff
+expected:
+- file: main/sensor_bus.c
+  line: 14
+  category: resource-leak
+  end_line: 15
+  also:
+  - error-handling
+  - race-condition

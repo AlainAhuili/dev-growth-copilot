@@ -9,3 +9,5 @@ expected:
   - file: main/ring_buffer.c
     line: 16
     category: off-by-one
+    # Writing past the array is how the off-by-one shows; both names fit.
+    also: [buffer-overflow]

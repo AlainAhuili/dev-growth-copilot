@@ -38,6 +38,17 @@ class Expected:
     # the diff doesn't show is optional: flagging it matches (no false positive), missing it
     # is not a miss. It doesn't count toward catch rate.
     optional: bool = False
+    # Other skill-map categories that name the same defect (a lock never released is a
+    # resource-leak and an error-handling bug). Same bug, so either name matches.
+    also: tuple[str, ...] = ()
+    # Lowest severity that counts as finding this bug. Lets the eval measure calibration:
+    # a secret exposure reported as `minor` is found but underrated, so it is a miss (the
+    # finding itself is then a learning note, not a false positive).
+    min_severity: str | None = None
+
+    @property
+    def categories(self) -> tuple[str, ...]:
+        return (self.category, *self.also)
 
 
 @dataclass(frozen=True)
@@ -106,10 +117,17 @@ def load_suite(suite_dir: Path) -> list[Case]:
     return cases
 
 
+SEVERITY_RANK = {"info": 0, "minor": 1, "major": 2, "critical": 3}
+
+
 def _matches(finding: dict, exp: Expected, tolerance: int) -> bool:
+    if exp.min_severity is not None and (
+        SEVERITY_RANK.get(finding.get("severity"), -1) < SEVERITY_RANK[exp.min_severity]
+    ):
+        return False
     return (
         normalize_path(finding.get("file")) == exp.file
-        and finding.get("category") == exp.category
+        and finding.get("category") in exp.categories
         and isinstance(finding.get("line"), int)
         and exp.line - tolerance <= finding["line"] <= (exp.end_line or exp.line) + tolerance
     )
@@ -256,6 +274,56 @@ def run_suite(
     return report
 
 
+@dataclass
+class RepeatedReport:
+    """The same suite run N times. Gate on the worst run: every run must pass."""
+
+    suite: str
+    runs: list[SuiteReport]
+
+    @property
+    def passed(self) -> bool:
+        return all(r.passed for r in self.runs)
+
+    @property
+    def failures(self) -> list[str]:
+        return [f"run {i}: {f}" for i, r in enumerate(self.runs, 1) for f in r.failures]
+
+    def case_pass_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for run in self.runs:
+            for c in run.cases:
+                counts[c.id] = counts.get(c.id, 0) + int(c.passed)
+        return counts
+
+    def flaky_cases(self) -> list[str]:
+        """Cases that passed in some runs but not all: the reviewer is unstable there."""
+        n = len(self.runs)
+        return [cid for cid, k in self.case_pass_counts().items() if 0 < k < n]
+
+    def worst_metrics(self) -> dict[str, float]:
+        lower_is_worse = {"catch_rate", "case_pass_rate"}
+        worst: dict[str, float] = {}
+        for run in self.runs:
+            for key, value in run.metrics.items():
+                if key not in worst:
+                    worst[key] = value
+                elif key in lower_is_worse:
+                    worst[key] = min(worst[key], value)
+                else:
+                    worst[key] = max(worst[key], value)
+        return worst
+
+
+def run_repeated(
+    suite: str, cases: list[Case], reviewer: Reviewer, thresholds: dict, repeats: int
+) -> RepeatedReport:
+    if repeats < 1:
+        raise ValueError("repeats must be >= 1")
+    return RepeatedReport(suite, [run_suite(suite, cases, reviewer, thresholds)
+                                  for _ in range(repeats)])
+
+
 def make_oracle(cases: list[Case]) -> Reviewer:
     """Returns the expected findings. Proves the harness and corpus, not a reviewer."""
     answers = {c.diff: c.expected for c in cases}
@@ -284,28 +352,50 @@ def resolve_reviewer(spec: str, cases: list[Case]) -> Reviewer:
     return getattr(importlib.import_module(module), attr)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--suite", required=True, choices=["seeded-bugs", "injection"])
-    parser.add_argument("--reviewer", default="oracle", help="oracle | null | module:function")
-    parser.add_argument("--report", type=Path, help="write a JSON report here")
-    args = parser.parse_args(argv)
-
-    thresholds = yaml.safe_load((EVALS_DIR / "thresholds.yaml").read_text(encoding="utf-8"))
-    cases = load_suite(EVALS_DIR / args.suite)
-    report = run_suite(args.suite, cases, resolve_reviewer(args.reviewer, cases), thresholds)
-
+def _print_run(report: SuiteReport) -> None:
     for c in report.cases:
         print(f"{'pass' if c.passed else 'FAIL'} {c.id}  caught {c.caught}/{c.expected}, "
               f"fp {c.false_positives}, notes {c.notes}, {c.latency_s:.2f}s")
         for detail in c.finding_details:
             print(format_finding(detail))
     print(json.dumps(report.metrics, indent=2))
-    for failure in report.failures:
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--suite", required=True, choices=["seeded-bugs", "injection"])
+    parser.add_argument("--reviewer", default="oracle", help="oracle | null | module:function")
+    parser.add_argument("--repeat", type=int, default=None,
+                        help="runs per suite (default: `repeats` in thresholds.yaml)")
+    parser.add_argument("--report", type=Path, help="write a JSON report here")
+    args = parser.parse_args(argv)
+
+    thresholds = yaml.safe_load((EVALS_DIR / "thresholds.yaml").read_text(encoding="utf-8"))
+    repeats = args.repeat or thresholds.get("repeats", 1)
+    cases = load_suite(EVALS_DIR / args.suite)
+    reviewer = resolve_reviewer(args.reviewer, cases)
+    # Deterministic reviewers give the same answer every time; one run is enough.
+    if args.reviewer in ("oracle", "null"):
+        repeats = 1
+    result = run_repeated(args.suite, cases, reviewer, thresholds, repeats)
+
+    for i, run in enumerate(result.runs, 1):
+        print(f"=== run {i}/{repeats}")
+        _print_run(run)
+    if repeats > 1:
+        print(f"=== summary over {repeats} runs (gate: every run must pass)")
+        for cid, k in result.case_pass_counts().items():
+            print(f"{'pass' if k == repeats else 'FAIL'} {cid}  {k}/{repeats}")
+        print(json.dumps({"worst": result.worst_metrics(),
+                          "flaky_cases": result.flaky_cases()}, indent=2))
+    for failure in result.failures:
         print(f"GATE FAILED: {failure}")
     if args.report:
-        args.report.write_text(json.dumps(asdict(report), indent=2), encoding="utf-8")
-    return 0 if report.passed else 1
+        payload = {"suite": args.suite, "repeats": repeats, "passed": result.passed,
+                   "worst": result.worst_metrics(), "flaky_cases": result.flaky_cases(),
+                   "runs": [asdict(r) for r in result.runs]}
+        args.report.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return 0 if result.passed else 1
 
 
 if __name__ == "__main__":
