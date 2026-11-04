@@ -25,8 +25,13 @@ REVIEWABLE_SUFFIXES = {
 REVIEWABLE_NAMES = {"CMakeLists.txt", "Dockerfile", "Kconfig", "Kconfig.projbuild"}
 MAX_MESSAGE_CHARS = 500
 GATED = {"major", "critical"}
+# The comment shows at most this many learning notes; the JSON keeps all of them.
+MAX_COMMENT_NOTES = 8
+# Other changed files given to each file review as read-only context.
+CONTEXT_MAX_LINES = 600
 
-Review = Callable[[str], ReviewResult]
+# review(diff, context=None) -> ReviewResult
+Review = Callable[..., ReviewResult]
 
 
 def split_by_file(diff_text: str) -> list[tuple[str | None, str]]:
@@ -51,26 +56,47 @@ def is_reviewable(path: str) -> bool:
     return p.suffix.lower() in REVIEWABLE_SUFFIXES or p.name in REVIEWABLE_NAMES
 
 
-def review_pr(diff_text: str, review: Review, max_lines: int, version: str) -> dict:
-    """Review each source file on its own. One file's failure never loses the others."""
+def build_context(files: list[tuple[str, str]], target: str, max_lines: int) -> str | None:
+    """Other reviewable files of the PR, whole files only, until the line budget is used."""
+    parts, used, omitted = [], 0, []
+    for path, file_diff in files:
+        if path == target:
+            continue
+        n = file_diff.count("\n")
+        if used + n > max_lines:
+            omitted.append(path)
+            continue
+        parts.append(file_diff)
+        used += n
+    if omitted:
+        parts.append("(Not included, over the context budget: " + ", ".join(omitted) + ")\n")
+    return "".join(parts) or None
+
+
+def review_pr(diff_text: str, review: Review, max_lines: int, version: str,
+              context_lines: int = CONTEXT_MAX_LINES) -> dict:
+    """Review each source file on its own, with the rest of the PR as read-only context.
+
+    One file's failure never loses the others.
+    """
     findings, skipped, errors = [], [], []
+    to_review: list[tuple[str, str]] = []
     cost = 0.0
     for path, file_diff in split_by_file(diff_text):
         if path is None:
             skipped.append({"file": "(deleted file)", "reason": "deleted"})
-            continue
-        if not file_diff:
+        elif not file_diff:
             skipped.append({"file": path, "reason": "empty, binary or rename only"})
-            continue
-        if not is_reviewable(path):
+        elif not is_reviewable(path):
             skipped.append({"file": path, "reason": "not a reviewed file type"})
-            continue
-        lines = file_diff.count("\n")
-        if lines > max_lines:
+        elif (lines := file_diff.count("\n")) > max_lines:
             skipped.append({"file": path, "reason": f"{lines} diff lines > {max_lines}"})
-            continue
+        else:
+            to_review.append((path, file_diff))
+    for path, file_diff in to_review:
+        context = build_context(to_review, path, context_lines)
         try:
-            result = review(file_diff)
+            result = review(file_diff, context=context) if context else review(file_diff)
         except Exception as exc:  # noqa: BLE001 - report and continue with the next file
             errors.append({"file": path, "error": f"{type(exc).__name__}: {exc}"[:300]})
             continue
@@ -83,6 +109,22 @@ def review_pr(diff_text: str, review: Review, max_lines: int, version: str) -> d
         "errors": errors,
         "cost_usd": round(cost, 6),
     }
+
+
+def select_notes(notes: list[dict], limit: int) -> list[dict]:
+    """At most `limit` notes: minor before info, spread across files round-robin, so one
+    file can't fill the comment."""
+    rank = {"minor": 0, "info": 1}
+    by_file: dict[str, list[dict]] = {}
+    for n in sorted(notes, key=lambda n: rank.get(n.get("severity"), 2)):
+        by_file.setdefault(str(n.get("file")), []).append(n)
+    picked: list[dict] = []
+    queues = list(by_file.values())
+    while len(picked) < limit and any(queues):
+        for q in queues:
+            if q and len(picked) < limit:
+                picked.append(q.pop(0))
+    return picked
 
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
@@ -131,7 +173,10 @@ def render_comment(report: dict) -> str:
     if gated:
         out += ["", "#### Findings", *(_finding_line(f) for f in gated)]
     if notes:
-        out += ["", "#### Learning notes", *(_finding_line(f) for f in notes)]
+        shown = select_notes(notes, MAX_COMMENT_NOTES)
+        out += ["", "#### Learning notes", *(_finding_line(f) for f in shown)]
+        if len(notes) > len(shown):
+            out.append(f"- …and {len(notes) - len(shown)} more in the `review-findings` artifact")
     if not findings:
         out += ["", "No findings. Which edge case did you test last?"]
     if report["errors"]:

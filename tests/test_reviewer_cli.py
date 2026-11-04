@@ -32,7 +32,7 @@ def test_split_by_file_keeps_order_and_paths():
 def test_review_pr_reviews_source_files_only_and_reports_the_rest():
     seen = []
 
-    def fake(diff_text):
+    def fake(diff_text, context=None):
         seen.append(diff_text)
         return ReviewResult(findings=[{"file": "x", "line": 1, "category": "off-by-one",
                                        "severity": "major", "message": "m"}], cost_usd=0.01)
@@ -49,12 +49,13 @@ def test_review_pr_reviews_source_files_only_and_reports_the_rest():
 
 def test_oversized_file_is_skipped_not_truncated():
     report = cli.review_pr(CASES["006-frame-length-unchecked"].diff,
-                           lambda d: ReviewResult(findings=[]), max_lines=5, version="v")
+                           lambda d, context=None: ReviewResult(findings=[]),
+                           max_lines=5, version="v")
     assert report["skipped"][0]["reason"].endswith("> 5")
 
 
 def test_one_failing_file_does_not_lose_the_others():
-    def flaky(diff_text):
+    def flaky(diff_text, context=None):
         if "pulse.c" in diff_text:
             raise RuntimeError("reviewer failed: overloaded")
         return ReviewResult(findings=[{"file": "main/adc_avg.c", "line": 9,
@@ -129,3 +130,56 @@ def test_main_end_to_end_with_fake_model(tmp_path, monkeypatch):
     assert "Text addressed to an AI reviewer" in comment.read_text()
     # Only the deterministic guard may fail the job.
     assert cli.main([*args, "--fail-on-injection"]) == 1
+
+
+def test_each_file_gets_the_other_reviewable_files_as_context():
+    seen = {}
+
+    def fake(diff_text, context=None):
+        seen[cli.split_by_file(diff_text)[0][0]] = context
+        return ReviewResult(findings=[])
+
+    diff = _pr_diff("004-isr-shared-counter", "010-loop-off-by-one", extra=NOTEBOOK)
+    cli.review_pr(diff, fake, 400, "v")
+    assert set(seen) == {"main/pulse.c", "main/adc_avg.c"}
+    assert seen["main/pulse.c"] == CASES["010-loop-off-by-one"].diff
+    assert seen["main/adc_avg.c"] == CASES["004-isr-shared-counter"].diff
+    assert all("train.ipynb" not in c for c in seen.values())  # non-source never in context
+
+
+def test_single_file_pr_has_no_context():
+    calls = []
+    cli.review_pr(CASES["010-loop-off-by-one"].diff,
+                  lambda d, context=None: calls.append(context) or ReviewResult(findings=[]),
+                  400, "v")
+    assert calls == [None]
+
+
+def test_context_budget_keeps_whole_files_and_names_the_rest():
+    files = [(p, d) for p, d in cli.split_by_file(_pr_diff(
+        "004-isr-shared-counter", "006-frame-length-unchecked", "010-loop-off-by-one"))]
+    budget = files[2][1].count("\n")  # room for exactly the adc file
+    ctx = cli.build_context(files, "main/pulse.c", budget)
+    assert "main/adc_avg.c" in ctx and "+bool frame_parse" not in ctx
+    assert "Not included, over the context budget: main/uart_proto.c" in ctx
+
+
+def _note(file, sev="minor"):
+    return {"file": file, "line": 1, "category": "missing-test", "severity": sev, "message": "q"}
+
+
+def test_select_notes_spreads_across_files_and_prefers_minor():
+    notes = [_note("a.c", "info"), *[_note("a.c") for _ in range(6)], _note("b.c"),
+             _note("c.c", "info")]
+    picked = cli.select_notes(notes, 4)
+    assert [n["file"] for n in picked] == ["a.c", "b.c", "c.c", "a.c"]
+    assert sum(n["file"] == "a.c" for n in cli.select_notes(notes, 8)) == 6
+
+
+def test_comment_caps_notes_and_points_to_the_artifact():
+    report = {"reviewer_version": "0.4.0", "cost_usd": 0.0, "errors": [], "skipped": [],
+              "findings": [_note(f"f{i}.c") for i in range(15)]}
+    md = cli.render_comment(report)
+    assert md.count("**minor**") == cli.MAX_COMMENT_NOTES
+    assert "and 7 more in the `review-findings` artifact" in md
+    assert "15 learning note(s)" in md

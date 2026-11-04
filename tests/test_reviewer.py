@@ -156,3 +156,39 @@ def test_iteration_2_run_replays():
     assert not score_case(ota, ReviewResult(wrong_line), 0.0, tol).passed  # still a miss:
     right_line = [{**wrong_line[0], "line": 8}]  # line 22 doesn't exist; numbering fixes it
     assert score_case(ota, ReviewResult(right_line), 0.0, tol).passed
+
+
+def test_context_findings_outside_the_target_file_are_dropped(monkeypatch):
+    seen = {}
+
+    async def fake_ask(diff_text, mode, categories, context=None):
+        seen["context"] = context
+        return [
+            {"file": "main/adc_avg.c", "line": 9, "category": "off-by-one",
+             "severity": "major", "message": "target file"},
+            {"file": "main/pulse.c", "line": 16, "category": "race-condition",
+             "severity": "major", "message": "context file: reviewed separately"},
+        ], 0.0
+
+    monkeypatch.setattr(claude, "_ask", fake_ask)
+    adc = next(c for c in load_suite(EVALS_DIR / "seeded-bugs") if c.id.startswith("010"))
+    pulse = next(c for c in load_suite(EVALS_DIR / "seeded-bugs") if c.id.startswith("004"))
+    result = claude.review(adc.diff, context=pulse.diff)
+    assert seen["context"] == pulse.diff
+    assert [f["file"] for f in result.findings] == ["main/adc_avg.c"]
+
+
+def test_without_context_nothing_is_filtered_and_signature_is_unchanged(monkeypatch):
+    async def fake_ask(diff_text, mode, categories):  # the eval runner's call shape
+        return [{"file": "main/adc_avg.c", "line": 9, "category": "off-by-one",
+                 "severity": "major", "message": "m"}], 0.0
+
+    monkeypatch.setattr(claude, "_ask", fake_ask)
+    adc = next(c for c in load_suite(EVALS_DIR / "seeded-bugs") if c.id.startswith("010"))
+    assert len(claude.review(adc.diff).findings) == 1
+
+
+def test_target_file():
+    adc = next(c for c in load_suite(EVALS_DIR / "seeded-bugs") if c.id.startswith("010"))
+    assert claude.target_file(adc.diff) == "main/adc_avg.c"
+    assert claude.target_file("--- a/x.c\n+++ /dev/null\n") is None
