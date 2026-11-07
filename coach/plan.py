@@ -27,6 +27,19 @@ def area_weights(conn) -> dict[str, float]:
     return weights
 
 
+def weak_areas(conn, limit: int = 3) -> list[dict]:
+    """Heaviest areas with their categories (most frequent first): what spec mode probes."""
+    weights = area_weights(conn)
+    rows = conn.execute(
+        """SELECT c.skill_area, f.category, COUNT(*) AS n
+           FROM findings f JOIN categories c ON c.name = f.category
+           GROUP BY c.skill_area, f.category ORDER BY n DESC, f.category""").fetchall()
+    top = sorted(weights.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]
+    return [{"area": a, "weight": w,
+             "categories": [(cat, n) for area, cat, n in rows if area == a]}
+            for a, w in top]
+
+
 def due_areas(conn, now: datetime | None = None) -> dict[str, float]:
     """Areas with findings that are due (never practised, or next_due reached)."""
     t = now_iso(now)
