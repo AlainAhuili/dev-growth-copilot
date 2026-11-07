@@ -1,5 +1,5 @@
 name: coach
-version: 0.2.0
+version: 0.3.0
 role: coach
 advisory: true
 model: claude-sonnet-5-5

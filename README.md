@@ -137,11 +137,38 @@ the exercise and the feedback. Findings and your answer reach it as data, never 
 instructions ("give me 5/5" in an answer is graded, not obeyed), and the score is clamped to
 0–5. Needs `ANTHROPIC_API_KEY` and `pip install -e ".[agent]"`.
 
+### Spec mode: questions on acceptance criteria, before the code
+
+```bash
+python -m coach.cli spec features/window.feature                  # checks + coach questions
+pytest --junitxml=junit.xml                                       # your pytest-bdd tests
+python -m coach.cli spec features/window.feature --results junit.xml --out spec.md
+python -m coach.cli spec features/window.feature --no-coach --strict  # CI: no model, may gate
+```
+
+Three layers, two of them plain code (`coach/gherkin.py`):
+
+- **Checks** (facts): no Then or When step, vague Then wording ("correctly", "properly",
+  "as expected", "fast"...), duplicate or missing scenario names, a Scenario Outline with no
+  example rows, placeholders that aren't Examples columns and columns no step uses.
+- **Tests**: with `--results`, every scenario is matched to its pytest-bdd test the way
+  pytest-bdd names it (`test_<scenario name>`; outline rows fold into one) and shown as
+  passed, failed, skipped or **not-automated**.
+- **Questions** (model): up to 8 on edge cases, preconditions, wording and coverage, aimed
+  at the skill areas the reviewer flags most in your code (an `off-by-one` habit gets
+  boundary questions). The coach asks; it never writes scenarios: an answer containing
+  `Given`/`When`/`Then` lines is dropped.
+
+The report is Markdown that is safe to post as a PR comment (same inert rendering as the
+reviewer's). Exit code is 0 unless `--strict` is set, and then only the checks and failing
+scenarios can fail it, never the model.
+
 ## Roadmap
 
 0. **Walking skeleton**: this repo with its own CI (done here); CI for the Edge AI repo (separate).
 1. The reviewer posts advisory comments in the commit stage and writes findings to the skill map.
 2. 15–20 seeded bugs gate reviewer releases; shadow-mode comparison.
-3. The coach reads the skill map and runs spec mode against the acceptance tests.
+3. The coach reads the skill map (practice mode, done) and runs spec mode against the
+   acceptance tests (done: `coach.cli spec`); weekly report next.
 4. The dojo breaks the pipeline on purpose.
 5. HIL tests on the ESP32-S3, staged OTA rollout, DORA dashboard.

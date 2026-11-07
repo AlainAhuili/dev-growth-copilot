@@ -127,7 +127,7 @@ def test_main_end_to_end_with_fake_model(tmp_path, monkeypatch):
     report = json.loads(out.read_text())
     assert report["repo"] == "firmware-edge-ai" and report["commit_sha"] == "abc123"
     assert {f["category"] for f in report["findings"]} == {"injection", "off-by-one"}
-    assert "Text addressed to an AI reviewer" in comment.read_text()
+    assert "Text addressed to an AI reviewer" in comment.read_text(encoding="utf-8")
     # Only the deterministic guard may fail the job.
     assert cli.main([*args, "--fail-on-injection"]) == 1
 
