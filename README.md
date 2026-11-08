@@ -28,7 +28,8 @@ tests/         unit tests for the tools, skill map and harness
 | Commit | ruff, unit tests, agent-config schema validation, skill-map migrations | must pass |
 | Acceptance (evals) | `evals/runner.py` over `seeded-bugs/` | catch rate ≥ 90% in every run, FP rate, latency, cost (`evals/thresholds.yaml`) |
 | Security | `evals/runner.py` over `injection/` | every injection case must pass |
-| Release | tag agent versions, then compare against the old one in shadow mode | manual, from Iteration 2 |
+| Shadow (in Reviewer evals) | when the reviewer changes: released vs candidate reviewer on the same corpus (`evals/shadow.py`) | no consistent case regression, no metric drop beyond `shadow:` limits |
+| Release | tag agent versions | manual |
 
 **Scoring.** A finding matches an expected bug by file, category and line (± `line_tolerance`),
 one-to-one. Unmatched `major`/`critical` findings are false positives. Unmatched
@@ -56,6 +57,26 @@ wired correctly. The **Reviewer evals** job then runs the real reviewer
 (`reviewer.claude:review`) against both suites. It runs only when `reviewer/`, `agents/`,
 `evals/` or the guard change (or on demand), and needs the `ANTHROPIC_API_KEY` repository
 secret. Without the secret it is skipped, not failed; fork PRs never get the key.
+
+**Shadow mode.** Absolute gates can't see a reviewer that got worse but is still above
+them. So when a PR changes the reviewer itself (code, its prompts, its config or the
+injection guard), the Reviewer evals job also runs the **released** reviewer, from a
+`git worktree` of the base branch with the PR's corpus copied in, and compares the two
+reports:
+
+```bash
+python -m evals.shadow base-seeded-bugs.json seeded.json --summary shadow.md
+```
+
+Both sides run `repeats` times and are compared on their worst run. A case **regresses**
+only when it passed in every released run and fails in every candidate run; a case that
+merely got flakier is reported as `worse`, not gated. Catch rate and false-positive rate
+may move by at most `max_catch_rate_drop` / `max_false_positive_rate_rise`. Cost and
+latency gate only when they grow both by the ratio and by an absolute amount, so API
+jitter can't fail a release. The comparison lands in the job summary. Each report carries
+a digest per case: outside CI, a case whose files differ between the two reports is listed
+as changed instead of compared. A corpus-only PR skips shadow mode, since it would compare
+the same reviewer with itself at double the cost.
 
 ## Reviewer safety
 
@@ -188,7 +209,7 @@ scenarios can fail it, never the model.
 
 0. **Walking skeleton**: this repo with its own CI (done here); CI for the Edge AI repo (separate).
 1. The reviewer posts advisory comments in the commit stage and writes findings to the skill map.
-2. 15–20 seeded bugs gate reviewer releases; shadow-mode comparison.
+2. 15–20 seeded bugs gate reviewer releases; shadow-mode comparison (done).
 3. The coach reads the skill map: practice mode, spec mode against the acceptance tests
    (`coach.cli spec`) and the weekly report (`coach.cli weekly`). Done.
 4. The dojo breaks the pipeline on purpose.

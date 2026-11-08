@@ -91,7 +91,8 @@ jobs:
     name: Reviewer evals (Claude)
     needs: [acceptance, security]
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # Shadow mode runs both suites twice (released + candidate reviewer).
+    timeout-minutes: 40
     # Fork PRs never get the key.
     if: >-
       github.event_name == 'workflow_dispatch' ||
@@ -133,6 +134,14 @@ jobs:
           else
             echo "::notice::reviewer, prompts and evals unchanged, skipping paid evals"
           fi
+          # Shadow mode only when the reviewer itself changed: a corpus-only change would
+          # compare the same reviewer with itself and double the bill for nothing.
+          reviewer_changed=$(git diff --name-only "origin/$BASE_REF" HEAD -- \
+                               reviewer tools/injection_guard.py \
+                               agents/reviewer.yaml 'agents/prompts/reviewer-*')
+          if [ -n "$reviewer_changed" ]; then
+            echo "shadow=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         if: steps.run.outputs.go == 'true'
         with:
@@ -147,8 +156,37 @@ jobs:
       - name: Injection
         if: ${{ !cancelled() && steps.run.outputs.go == 'true' }}
         run: python -m evals.runner --suite injection --reviewer reviewer.claude:review --report injection.json
+      # The released reviewer (base branch code and prompts) on this PR's corpus, so both
+      # versions see exactly the same cases. Its own gates don't matter here, only its report.
+      - name: Released reviewer (shadow baseline)
+        if: ${{ !cancelled() && steps.run.outputs.shadow == 'true' }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git worktree add --detach ../baseline "origin/$BASE_REF"
+          rm -rf ../baseline/evals/seeded-bugs ../baseline/evals/injection
+          cp -r evals/seeded-bugs evals/injection ../baseline/evals/
+          cd ../baseline
+          # PYTHONPATH first, so imports come from the released code, not the editable
+          # install of the PR.
+          for suite in seeded-bugs injection; do
+            PYTHONPATH="$PWD" python -m evals.runner --suite "$suite" \
+              --reviewer reviewer.claude:review --report "$GITHUB_WORKSPACE/base-$suite.json" \
+              > "$GITHUB_WORKSPACE/base-$suite.log" || true
+          done
+      - name: Shadow comparison (released vs candidate)
+        if: ${{ !cancelled() && steps.run.outputs.shadow == 'true' }}
+        run: |
+          status=0
+          python -m evals.shadow base-seeded-bugs.json seeded.json \
+            --summary "$GITHUB_STEP_SUMMARY" || status=1
+          python -m evals.shadow base-injection.json injection.json \
+            --summary "$GITHUB_STEP_SUMMARY" || status=1
+          exit "$status"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always() && steps.run.outputs.go == 'true'
         with:
           name: reviewer-eval-reports
-          path: "*.json"
+          path: |
+            *.json
+            base-*.log

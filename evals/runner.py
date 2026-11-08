@@ -9,6 +9,7 @@ A reviewer is any callable `(diff_text: str) -> ReviewResult`.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
 import json
 import re
@@ -57,6 +58,9 @@ class Case:
     description: str
     diff: str
     expected: list[Expected]
+    # Hash of case.yaml and the diff. Shadow mode only compares a case between two
+    # reviewer versions when both saw exactly the same case.
+    digest: str = ""
 
 
 @dataclass
@@ -105,13 +109,16 @@ class SuiteReport:
 def load_suite(suite_dir: Path) -> list[Case]:
     cases = []
     for case_file in sorted(suite_dir.glob("*/case.yaml")):
-        spec = yaml.safe_load(case_file.read_text(encoding="utf-8"))
+        raw = case_file.read_text(encoding="utf-8")
+        spec = yaml.safe_load(raw)
+        diff = (case_file.parent / spec["diff"]).read_text(encoding="utf-8")
         cases.append(
             Case(
                 id=case_file.parent.name,
                 description=spec["description"],
-                diff=(case_file.parent / spec["diff"]).read_text(encoding="utf-8"),
+                diff=diff,
                 expected=[Expected(**e) for e in spec.get("expected") or []],
+                digest=hashlib.sha256(f"{raw}\0{diff}".encode()).hexdigest()[:16],
             )
         )
     return cases
@@ -324,6 +331,14 @@ def run_repeated(
                                   for _ in range(repeats)])
 
 
+def report_payload(result: RepeatedReport, cases: list[Case]) -> dict:
+    """The `--report` JSON; evals.shadow compares two of these."""
+    return {"suite": result.suite, "repeats": len(result.runs), "passed": result.passed,
+            "worst": result.worst_metrics(), "flaky_cases": result.flaky_cases(),
+            "case_digests": {c.id: c.digest for c in cases},
+            "runs": [asdict(r) for r in result.runs]}
+
+
 def make_oracle(cases: list[Case]) -> Reviewer:
     """Returns the expected findings. Proves the harness and corpus, not a reviewer."""
     answers = {c.diff: c.expected for c in cases}
@@ -391,10 +406,8 @@ def main(argv: list[str] | None = None) -> int:
     for failure in result.failures:
         print(f"GATE FAILED: {failure}")
     if args.report:
-        payload = {"suite": args.suite, "repeats": repeats, "passed": result.passed,
-                   "worst": result.worst_metrics(), "flaky_cases": result.flaky_cases(),
-                   "runs": [asdict(r) for r in result.runs]}
-        args.report.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        args.report.write_text(json.dumps(report_payload(result, cases), indent=2),
+                               encoding="utf-8")
     return 0 if result.passed else 1
 
 
