@@ -137,6 +137,27 @@ the exercise and the feedback. Findings and your answer reach it as data, never 
 instructions ("give me 5/5" in an answer is graded, not obeyed), and the score is clamped to
 0–5. Needs `ANTHROPIC_API_KEY` and `pip install -e ".[agent]"`.
 
+### Weekly report
+
+```bash
+python -m coach.cli weekly                         # this week vs last, next week's focus
+python -m coach.cli weekly --dora dora.json --out weekly.md
+```
+
+Plain code (`coach/weekly.py`) compares the last 7 days with the 7 before, per skill area
+(findings weighted by severity), counts practice sessions and scores, and picks next week's
+focus: the heaviest area this week (ties: the one that rose), or, after a quiet week, the
+area the practice schedule would pick. The model gets the numbers and that decision and
+only explains them: a headline, why the focus matters, up to 3 steps. `--no-coach` skips it.
+
+`--dora` takes any of `deployments_per_week`, `lead_time_hours`, `change_failure_rate`
+(0–1) and `time_to_restore_hours`; until the pipeline produces them (Iteration 5), write
+the file by hand or leave it out.
+
+Findings are dated by when they were reviewed (the CI artifact's time), not when they were
+imported. A skill map synced before coach 0.4.0 has import dates; for correct weekly
+trends, delete it and run `skillmap.sync` again (this also clears practice history).
+
 ### Spec mode: questions on acceptance criteria, before the code
 
 ```bash
@@ -168,7 +189,7 @@ scenarios can fail it, never the model.
 0. **Walking skeleton**: this repo with its own CI (done here); CI for the Edge AI repo (separate).
 1. The reviewer posts advisory comments in the commit stage and writes findings to the skill map.
 2. 15–20 seeded bugs gate reviewer releases; shadow-mode comparison.
-3. The coach reads the skill map (practice mode, done) and runs spec mode against the
-   acceptance tests (done: `coach.cli spec`); weekly report next.
+3. The coach reads the skill map: practice mode, spec mode against the acceptance tests
+   (`coach.cli spec`) and the weekly report (`coach.cli weekly`). Done.
 4. The dojo breaks the pipeline on purpose.
 5. HIL tests on the ESP32-S3, staged OTA rollout, DORA dashboard.
