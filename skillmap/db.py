@@ -21,6 +21,7 @@ class Finding:
     commit_sha: str | None = None
     file: str | None = None
     line: int | None = None
+    created_at: str | None = None  # when it was found (ISO-8601 UTC); default: now
 
 
 def connect(path: str | Path = ":memory:") -> sqlite3.Connection:
@@ -51,8 +52,9 @@ def record_finding(conn: sqlite3.Connection, finding: Finding) -> int:
         cur = conn.execute(
             """INSERT INTO findings
                (agent, agent_version, stage, repo, commit_sha, category, severity,
-                file, line, message)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                file, line, message, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                       COALESCE(?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')))""",
             (
                 finding.agent,
                 finding.agent_version,
@@ -64,6 +66,7 @@ def record_finding(conn: sqlite3.Connection, finding: Finding) -> int:
                 finding.file,
                 finding.line,
                 finding.message,
+                finding.created_at,
             ),
         )
     return cur.lastrowid

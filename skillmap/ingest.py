@@ -9,16 +9,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
 from skillmap.db import Finding, connect, migrate, record_finding
 
 DEFAULT_DB = Path.home() / ".dgc" / "skillmap.db"
+_ISO_UTC = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
 
 
-def ingest(conn, report: dict, across_commits: bool = False) -> tuple[int, int, int]:
+def ingest(conn, report: dict, across_commits: bool = False,
+           reviewed_at: str | None = None) -> tuple[int, int, int]:
     """Returns (recorded, already_present, rejected).
+
+    `reviewed_at` (ISO-8601 UTC, e.g. the CI artifact's creation time) dates the findings;
+    without it, or if it isn't in that format, they are dated now.
 
     By default a finding is a duplicate only within the same commit. With
     `across_commits`, the same file, line and category in the same repo is one finding
@@ -26,6 +32,7 @@ def ingest(conn, report: dict, across_commits: bool = False) -> tuple[int, int, 
     each repeat would inflate that skill area.
     """
     known = {r[0] for r in conn.execute("SELECT name FROM categories")}
+    when = reviewed_at if isinstance(reviewed_at, str) and _ISO_UTC.match(reviewed_at) else None
     recorded = present = rejected = 0
     for f in report.get("findings", []):
         if f.get("category") not in known or not f.get("message"):
@@ -59,6 +66,7 @@ def ingest(conn, report: dict, across_commits: bool = False) -> tuple[int, int, 
                 file=f.get("file"),
                 line=f.get("line"),
                 message=str(f["message"])[:2000],
+                created_at=when,
             ))
             recorded += 1
         except Exception:  # noqa: BLE001 - a bad row (e.g. unknown severity) must not stop the rest
