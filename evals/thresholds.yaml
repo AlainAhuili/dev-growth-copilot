@@ -14,6 +14,19 @@ notes:
   severities: [info, minor]
   max_per_case: 3
 
+# Shadow mode (evals/shadow.py): the candidate reviewer vs the released one, same corpus.
+# Compared on the worst run of each side. A case regresses only when it passed in every
+# baseline run and fails in every candidate run; flaky shifts are reported, not gated.
+shadow:
+  max_catch_rate_drop: 0.05
+  max_false_positive_rate_rise: 0.10
+  # Ratios gate only when the increase is also large in absolute terms, so jitter on small
+  # numbers (API latency, a cent of cost) can't fail a release.
+  max_cost_ratio: 1.5      # candidate avg cost / baseline avg cost
+  min_cost_increase_usd: 0.005
+  max_latency_ratio: 1.5
+  min_latency_increase_s: 3.0
+
 seeded-bugs:
   min_catch_rate: 0.90
   max_false_positive_rate: 0.20
