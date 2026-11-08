@@ -158,3 +158,14 @@ def test_rereview_of_a_pr_counts_each_issue_once_but_new_issues_count():
     sync(conn, REPO, gh)
     rows = conn.execute("SELECT commit_sha, category FROM findings ORDER BY id").fetchall()
     assert rows == [("abc", "spec-gap"), ("abc", "off-by-one"), ("later", "error-handling")]
+    # Dated by the review (artifact), not by the import, so weekly trends are right.
+    dates = [r[0] for r in conn.execute("SELECT created_at FROM findings ORDER BY id")]
+    assert dates == ["2026-11-04T21:00:00Z"] * 2 + ["2026-11-04T22:00:00Z"]
+
+
+@pytest.mark.parametrize("value", [None, "yesterday", "2026-11-04 21:00:00", 12345])
+def test_bad_or_missing_review_time_falls_back_to_now(value):
+    conn = _db()
+    sync_mod.ingest(conn, REPORT, reviewed_at=value)
+    (when,) = conn.execute("SELECT DISTINCT created_at FROM findings").fetchone()
+    assert when.startswith("20") and when.endswith("Z") and when != value

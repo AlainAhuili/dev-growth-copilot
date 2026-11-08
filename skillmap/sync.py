@@ -116,7 +116,8 @@ def sync(conn, repo: str, fetch: Fetch) -> dict[str, int]:
             print(f"  artifact {art['id']}: skipped ({exc})", file=sys.stderr)
             stats["failed"] += 1
             continue
-        recorded, present, rejected = ingest(conn, report, across_commits=True)
+        recorded, present, rejected = ingest(conn, report, across_commits=True,
+                                             reviewed_at=art.get("created_at"))
         with conn:
             conn.execute(
                 "INSERT INTO synced_artifacts (repo, artifact_id, recorded) VALUES (?, ?, ?)",
